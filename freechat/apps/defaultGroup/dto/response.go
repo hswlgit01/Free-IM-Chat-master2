@@ -7,6 +7,7 @@ import (
 
 type RegisterAddGroupJoinAllResp struct {
 	GroupID   string             `json:"group_id"`
+	GroupName string             `json:"group_name"`
 	OrgId     primitive.ObjectID `json:"org_id"`
 	CreatedAt int64              `json:"created_at"`
 }

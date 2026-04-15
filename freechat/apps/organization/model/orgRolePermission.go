@@ -24,6 +24,7 @@ const (
 	PermissionCodeLottery            PermissionCode = "lottery"             // 允许抽奖
 	PermissionCodeLivestream         PermissionCode = "livestream"          // 允许开启直播
 	PermissionCodeLoginRecord        PermissionCode = "login_record"        // 允许查看登录记录
+	PermissionCodeFreePrivateChat    PermissionCode = "free_private_chat"   // 可无视好友关系直接私聊
 	PermissionCodeOfficialProtection PermissionCode = "official_protection" // 官方账号保护（不能被发起音视频、踢出群组、禁言）
 )
 
@@ -41,6 +42,7 @@ func IsValidPermissionCode(c PermissionCode) bool {
 		PermissionCodeLottery,
 		PermissionCodeLivestream,
 		PermissionCodeLoginRecord,
+		PermissionCodeFreePrivateChat,
 		PermissionCodeOfficialProtection:
 		return true
 	default:

@@ -125,8 +125,38 @@ func (w *DefaultGroupSvc) SuperCmsListDefaultGroup(ctx context.Context, orgId pr
 		Total: total,
 	}
 
+	groupIDs := make([]string, 0, len(records))
+	for _, record := range records {
+		if record != nil && record.GroupID != "" {
+			groupIDs = append(groupIDs, record.GroupID)
+		}
+	}
+
+	groupNameMap := make(map[string]string, len(groupIDs))
+	if len(groupIDs) > 0 {
+		imApiCaller := plugin.ImApiCaller()
+		ctxWithOpID := context.WithValue(ctx, constantpb.OperationID, "default-group-list")
+		imApiCallerToken, tokenErr := imApiCaller.ImAdminTokenWithDefaultAdmin(ctxWithOpID)
+		if tokenErr != nil {
+			log.ZWarn(ctx, "get im admin token for default group list failed", tokenErr)
+		} else {
+			groups, findErr := imApiCaller.FindGroupInfo(mctx.WithApiToken(ctxWithOpID, imApiCallerToken), groupIDs)
+			if findErr != nil {
+				log.ZWarn(ctx, "find default group info failed", findErr, "group_ids", groupIDs)
+			} else {
+				for _, group := range groups {
+					if group == nil || group.GroupID == "" {
+						continue
+					}
+					groupNameMap[group.GroupID] = group.GroupName
+				}
+			}
+		}
+	}
+
 	for _, record := range records {
 		respListItem := dto.NewRegisterAddGroupJoinAllResp(record)
+		respListItem.GroupName = groupNameMap[record.GroupID]
 		resp.List = append(resp.List, respListItem)
 	}
 	return resp, nil

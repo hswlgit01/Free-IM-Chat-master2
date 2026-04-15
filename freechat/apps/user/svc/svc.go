@@ -290,6 +290,17 @@ func (w *UserSvc) RegisterUser(ctx context.Context, operationID string, req *Reg
 		return nil, err
 	}
 
+	inviteUserID := ""
+	if orgUser.InviterType == OrgModel.OrganizationUserInviterTypeOrgUser {
+		inviteUserID = orgUser.InviterImServerUserId
+	}
+	if inviteUserID != "" && inviteUserID != orgUser.ImServerUserId {
+		if err := imApiCaller.ImportFriend(imApiCallerCtx, orgUser.ImServerUserId, []string{inviteUserID}); err != nil {
+			log.ZError(ctxWithOpID, "failed to import inviter as friend after registration", err,
+				"userID", orgUser.ImServerUserId, "inviteUserID", inviteUserID)
+		}
+	}
+
 	defFriendSvc := defaultFriendSvc.NewDefaultFriendSvc()
 	defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
 
@@ -304,10 +315,6 @@ func (w *UserSvc) RegisterUser(ctx context.Context, operationID string, req *Reg
 	imToken, err := imApiCaller.GetUserToken(imApiCallerCtx, orgUser.ImServerUserId, req.Platform)
 	if err != nil {
 		return nil, err
-	}
-	inviteUserID := ""
-	if orgUser.InviterType == OrgModel.OrganizationUserInviterTypeOrgUser {
-		inviteUserID = orgUser.InviterImServerUserId
 	}
 
 	return &RegUserResp{
@@ -492,6 +499,17 @@ func (w *UserSvc) RegisterUserViaAccount(ctx context.Context, operationID string
 		return nil, err
 	}
 
+	inviteUserID := ""
+	if orgUser.InviterType == OrgModel.OrganizationUserInviterTypeOrgUser {
+		inviteUserID = orgUser.InviterImServerUserId
+	}
+	if inviteUserID != "" && inviteUserID != orgUser.ImServerUserId {
+		if err := imApiCaller.ImportFriend(imApiCallerCtx, orgUser.ImServerUserId, []string{inviteUserID}); err != nil {
+			log.ZError(ctxWithOpID, "failed to import inviter as friend after registration", err,
+				"userID", orgUser.ImServerUserId, "inviteUserID", inviteUserID)
+		}
+	}
+
 	defFriendSvc := defaultFriendSvc.NewDefaultFriendSvc()
 	defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
 
@@ -517,11 +535,6 @@ func (w *UserSvc) RegisterUserViaAccount(ctx context.Context, operationID string
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	inviteUserID := ""
-	if orgUser.InviterType == OrgModel.OrganizationUserInviterTypeOrgUser {
-		inviteUserID = orgUser.InviterImServerUserId
 	}
 
 	return &RegUserResp{

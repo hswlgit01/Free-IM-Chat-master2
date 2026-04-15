@@ -192,7 +192,7 @@ func (s *SystemStatisticsSvc) GetSalesDailyStatistics(ctx context.Context, orgId
 		err    error
 	}
 
-	resultChan := make(chan *inviteResult, 4)
+	resultChan := make(chan *inviteResult, 5)
 	var wg sync.WaitGroup
 
 	// 1. 注册统计（按邀请人）
@@ -237,6 +237,17 @@ func (s *SystemStatisticsSvc) GetSalesDailyStatistics(ctx context.Context, orgId
 			log.ZError(ctx, "邀请【所有下级】签到统计查询失败", err, "orgId", orgId.Hex())
 		}
 		resultChan <- &inviteResult{metric: "all_sign", data: data, err: err}
+	}()
+
+	// 5. 整个团队签到统计（按祖先业务员）
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		data, err := statisticsDao.GetInviteDailyTeamCheckinStats(ctx, orgId, start, end)
+		if err != nil {
+			log.ZError(ctx, "邀请【整个团队】签到统计查询失败", err, "orgId", orgId.Hex())
+		}
+		resultChan <- &inviteResult{metric: "team_sign", data: data, err: err}
 	}()
 
 	// 等待所有查询完成，添加超时保护
@@ -289,7 +300,8 @@ func (s *SystemStatisticsSvc) GetSalesDailyStatistics(ctx context.Context, orgId
 					statObj.Sign = count
 				case "all_sign":
 					statObj.AllCheckin = count
-					statObj.AllCheckin = count
+				case "team_sign":
+					statObj.TeamCheckin = count
 				case "verified":
 					statObj.Verified = count
 				}

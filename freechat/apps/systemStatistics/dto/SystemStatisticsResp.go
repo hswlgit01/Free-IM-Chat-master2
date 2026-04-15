@@ -20,5 +20,6 @@ type SystemStatisticsResp struct {
 	CheckinCount     int32 `json:"checkin_count"`      // 签到人数（当日签到去重人数）
 	SignByCreatedAt  int32 `json:"sign_by_created_at"` // 按创建时间统计的签到人数
 	AllCheckinCount  int32 `json:"all_checkin_count"`  // 下级所有签到人数（当日所有被邀请用户签到总人数）
+	TeamCheckinCount int32 `json:"team_checkin_count"` // 整个团队签到人数（当日全团队签到去重人数）
 
 }

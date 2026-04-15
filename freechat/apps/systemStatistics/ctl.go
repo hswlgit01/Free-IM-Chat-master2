@@ -214,6 +214,7 @@ func (s *SystemStatisticsCtl) GetSalesDailyStatistics(c *gin.Context) {
 			UnverifiedCount:  s.Unverified,
 			CheckinCount:     s.Sign,
 			AllCheckinCount:  s.AllCheckin,
+			TeamCheckinCount: s.TeamCheckin,
 		}
 		respList = append(respList, item)
 	}

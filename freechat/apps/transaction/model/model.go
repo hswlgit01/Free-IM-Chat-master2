@@ -574,77 +574,49 @@ func (d *TransactionDao) QueryTransactionRecordsWithUserInfo(ctx context.Context
 		})
 	}
 
-	// 连接发送者用户信息
-	//pipeline = append(pipeline, bson.M{
-	//	"$lookup": bson.M{
-	//		"from":         "user",
-	//		"localField":   "sender_im_id",
-	//		"foreignField": "user_id",
-	//		"as":           "sender_user",
-	//	},
-	//})
-	//
-	//// 连接发送者属性信息
-	//pipeline = append(pipeline, bson.M{
-	//	"$lookup": bson.M{
-	//		"from":         "attribute",
-	//		"localField":   "sender_id",
-	//		"foreignField": "user_id",
-	//		"as":           "sender_attr",
-	//	},
-	//})
-	//
-	//// 连接接收者用户信息（如果是转账）
-	//pipeline = append(pipeline, bson.M{
-	//	"$lookup": bson.M{
-	//		"from":         "user",
-	//		"localField":   "target_im_id",
-	//		"foreignField": "user_id",
-	//		"as":           "receiver_user",
-	//	},
-	//})
-	//
-	//// 连接接收者属性信息（如果是转账）
-	//pipeline = append(pipeline, bson.M{
-	//	"$lookup": bson.M{
-	//		"from": "organization_user",
-	//		"let":  bson.M{"targetImId": "$target_im_id"},
-	//		"pipeline": []bson.M{
-	//			{
-	//				"$match": bson.M{
-	//					"$expr": bson.M{"$eq": []string{"$im_server_user_id", "$$targetImId"}},
-	//				},
-	//			},
-	//			{
-	//				"$lookup": bson.M{
-	//					"from":         "attribute",
-	//					"localField":   "user_id",
-	//					"foreignField": "user_id",
-	//					"as":           "attr_info",
-	//				},
-	//			},
-	//			{
-	//				"$unwind": bson.M{
-	//					"path":                       "$attr_info",
-	//					"preserveNullAndEmptyArrays": true,
-	//				},
-	//			},
-	//		},
-	//		"as": "receiver_attr",
-	//	},
-	//})
-	//
-	//// 连接货币信息
-	//pipeline = append(pipeline, bson.M{
-	//	"$lookup": bson.M{
-	//		"from":         "wallet_currency",
-	//		"localField":   "currency_id",
-	//		"foreignField": "_id",
-	//		"as":           "currency",
-	//	},
-	//})
+	pipeline = append(pipeline,
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "user",
+				"localField":   "sender_im_id",
+				"foreignField": "user_id",
+				"as":           "sender_user",
+			},
+		},
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "attribute",
+				"localField":   "sender_id",
+				"foreignField": "user_id",
+				"as":           "sender_attr",
+			},
+		},
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "user",
+				"localField":   "target_im_id",
+				"foreignField": "user_id",
+				"as":           "receiver_user",
+			},
+		},
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "attribute",
+				"localField":   "target_id",
+				"foreignField": "user_id",
+				"as":           "receiver_attr",
+			},
+		},
+		bson.M{
+			"$lookup": bson.M{
+				"from":         "wallet_currency",
+				"localField":   "currency_id",
+				"foreignField": "_id",
+				"as":           "currency",
+			},
+		},
+	)
 
-	// 展开数组字段
 	pipeline = append(pipeline, bson.M{
 		"$unwind": bson.M{
 			"path":                       "$sender_user",
@@ -680,18 +652,19 @@ func (d *TransactionDao) QueryTransactionRecordsWithUserInfo(ctx context.Context
 		},
 	})
 
-	//// 关键词搜索过滤（针对发送者）
-	//if keyword != "" {
-	//	pipeline = append(pipeline, bson.M{
-	//		"$match": bson.M{
-	//			"$or": []bson.M{
-	//				{"sender_user.nickname": bson.M{"$regex": keyword, "$options": "i"}},
-	//				{"sender_attr.account": bson.M{"$regex": keyword, "$options": "i"}},
-	//				{"sender_im_id": bson.M{"$regex": keyword, "$options": "i"}},
-	//			},
-	//		},
-	//	})
-	//}
+	if keyword != "" {
+		re := bson.M{"$regex": keyword, "$options": "i"}
+		pipeline = append(pipeline, bson.M{
+			"$match": bson.M{
+				"$or": []bson.M{
+					{"sender_user.nickname": re},
+					{"sender_attr.account": re},
+					{"sender_attr.user_id": re},
+					{"sender_im_id": re},
+				},
+			},
+		})
+	}
 
 	// 获取总数
 	countPipeline := append(pipeline, bson.M{"$count": "total"})
@@ -795,6 +768,7 @@ func (d *ReceiveRecordDao) transactionIDsMatchingSenderKeyword(ctx context.Conte
 		{"$match": bson.M{"$or": []bson.M{
 			{"sender_user.nickname": re},
 			{"sender_attr.account": re},
+			{"sender_attr.user_id": re},
 			{"sender_im_id": re},
 		}}},
 		{"$group": bson.M{"_id": "$transaction_id"}},
@@ -992,6 +966,7 @@ func (d *ReceiveRecordDao) QueryReceiveRecordsWithUserInfo(ctx context.Context, 
 	recvKeywordMatch := bson.M{"$or": []bson.M{
 		{"receiver_user.nickname": re},
 		{"receiver_attr.account": re},
+		{"receiver_attr.user_id": re},
 		{"user_im_id": re},
 	}}
 
