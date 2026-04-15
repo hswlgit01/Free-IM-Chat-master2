@@ -1,0 +1,15 @@
+# 服务发现相关
+enable: "etcd"
+etcd:
+  rootDirectory: openim
+  address: [ localhost:12379 ]
+  username: ''
+  password: ''
+
+# 没有k8s,这个可以忽略不用设置
+kubernetes:
+  namespace: default
+
+rpcService:
+  chat: chat-rpc-service
+  admin: admin-rpc-service

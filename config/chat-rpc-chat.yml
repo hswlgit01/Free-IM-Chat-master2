@@ -1,0 +1,76 @@
+# chat-rpc服务相关
+rpc:
+  # The IP address where this RPC service registers itself; if left blank, it defaults to the internal network IP
+  # RPC 服务注册的 IP 地址。留空自动使用内网IP（本地调试推荐）
+  registerIP: ''
+  # IP address that the RPC service listens on; setting to 0.0.0.0 listens on both internal and external IPs. If left blank, it automatically uses the internal network IP
+  # RPC 服务监听的 IP 地址。0.0.0.0 监听所有网络接口（本地调试推荐）
+  listenIP: 0.0.0.0
+  # List of ports that the RPC service listens on; configuring multiple ports will launch multiple instances.
+  # rpc 监听的端口
+  ports: [ 30300 ]
+
+# 验证码相关
+verifyCode:
+  # 验证码有效时长,单位为秒
+  validTime: 300
+  # 验证码可以允许的错误次数
+  validCount: 5
+  # 请求验证码的时间周期
+  uintTime: 86400
+  # 在请求验证码的时间周期内能请求验证码的最大次数
+  maxCount: 10
+  # 没有配置验证码时的默认验证码
+  superCode: "666666"
+  # 验证码长度
+  len: 6
+  phone:
+    use: ""  # superCode: user superCode; ali: use ali verify code; weiwebs: use weiwebs sms platform
+    ali:
+      endpoint: 
+      accessKeyId: ""
+      accessKeySecret: ""
+      signName: ""
+      verificationCodeTemplateCode: ""
+    weiwebs:
+      account: ""
+      password: ""
+      signName: ""
+#  mail:
+#    use: "mail"  # superCode: user superCode; mail: use mail verify code;
+#    title: "FREECHAT"
+#    senderMail: "do-not-reply@chatcdn.app"
+#    senderAuthorizationCode: ""
+#    smtpAddr: "smtpdm-ap-southeast-1.aliyun.com"
+#    smtpPort: 465
+#    supportCenterURL: ""
+
+  mail:
+     use: "mail"  # superCode: user superCode; mail: use mail verify code;
+     title: ""
+     senderMail: ""
+     senderAuthorizationCode: "" # 可以留空，因为使用SendGrid时不需要
+     smtpAddr: "" # 可以留空，因为使用SendGrid时不需要
+     smtpPort: 0 # 可以设为0，因为使用SendGrid时不需要
+     supportCenterURL: ""
+     sendgrid:
+       apiKey: "" # 替换为您的API密钥
+       senderName: "FREECHAT"
+
+# 音视频相关配置
+liveKit:
+  backupUrls: [ "ws://192.168.31.166:7880", ]  # LIVEKIT_URL, LiveKit server address and port (本地调试使用localhost)
+  key: "devkey"
+  secret: "secret"
+
+# 直播录制对象存储相关
+liveKitRecord:
+  aws:
+    secret: 
+    accessKey: 
+    bucket: 
+    region: 
+
+
+# 是否开放注册
+allowRegister: true

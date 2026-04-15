@@ -1,0 +1,43 @@
+# List of Redis server addresses
+# 集群内redis的配置,redis会存储chat token和IM token 等等一些其它数据
+# Redis 服务器的地址列表。可以指定一个或多个地址，以支持 Redis 的单机或集群模式。
+address: [ localhost:16379 ]
+# Username for Redis authentication (leave blank if not used)
+# 用于 Redis 认证的用户名。如果 Redis 未启用用户名认证，可以留空。
+username: ''
+# Password for Redis authentication
+# redis用户的密码
+password: openIM123
+# Enable or disable pipeline processing
+# 是否启用管道处理。管道处理可以将多个命令打包在一起发送，从而减少网络延迟
+enablePipeline: false
+# Enable or disable cluster mode
+# 是否启用 Redis 集群模式。如果启用集群模式，Redis 会自动处理数据的分片和故障转移
+clusterMode: false
+# Database index to be used
+# 具体使用的redis数据库
+db: 0
+# Maximum number of retry attempts for a failed connection
+# 失败连接的最大重试次数
+maxRetry: 10
+# TLS configuration for Redis connection
+# Redis TLS 加密连接配置
+tls:
+  # Enable or disable TLS encryption
+  # 是否启用 TLS 加密连接
+  enableTLS: false
+  # Path to CA certificate file
+  # CA 证书文件路径
+  caCrt: ""
+  # Path to client certificate file
+  # 客户端证书文件路径
+  clientCrt: ""
+  # Path to client private key file
+  # 客户端私钥文件路径
+  clientKey: ""
+  # Password for encrypted client private key (if applicable)
+  # 客户端私钥密码（如果私钥文件有加密）
+  clientKeyPwd: ""
+  # Skip TLS certificate verification (not recommended for production)
+  # 跳过 TLS 证书验证（生产环境不推荐）
+  insecureSkipVerify: false

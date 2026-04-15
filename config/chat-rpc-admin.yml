@@ -1,0 +1,17 @@
+rpc:
+  # The IP address where this RPC service registers itself; if left blank, it defaults to the internal network IP
+  # RPC 服务注册的 IP 地址。明确指定 IPv4 地址以避免 IPv6 问题
+  registerIP: '192.168.31.166'
+  # IP address that the RPC service listens on; setting to 0.0.0.0 listens on both internal and external IPs. If left blank, it automatically uses the internal network IP
+  # RPC 服务监听的 IP 地址。修改为具体 IPv4 地址以避免 IPv6 问题
+  listenIP: 192.168.31.166
+  # List of ports that the RPC service listens on; configuring multiple ports will launch multiple instances.
+  # rpc 监听的端口
+  ports: [ 30200 ]
+
+# token相关
+tokenPolicy:
+  # token 超时时间,单位为天
+  expire: 90
+# 生成token的安全密钥
+secret: chat123

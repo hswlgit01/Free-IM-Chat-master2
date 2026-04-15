@@ -1,0 +1,23 @@
+api:
+  # Listening IP; 0.0.0.0 means both internal and external IPs are listened to, default is recommended
+  # HTTP API 服务监听的 IP 地址。使用 0.0.0.0 以支持 localhost 和局域网访问(包括 Android 模拟器)
+  listenIP: 0.0.0.0
+  # Listening ports; if multiple are configured, multiple instances will be launched
+  # chat服务的 http 服务端口
+  ports: [ 10008 ]
+
+# OpenExchangeRates API配置
+exchange:
+  # exchangerate API应用ID
+  app_id: "6b596bf87f9977c2c42820b6"
+  # exchangerate API基础URL
+  base_url: "https://v6.exchangerate-api.com/v6"
+
+# mode 当前环境：test、prod
+mode: "test"
+
+# 是否启用设备注册用户次数限制
+enable_device_register_num: false
+
+# 超管默认邮箱配置（当admin表中没有邮箱时使用此配置）
+adminDefaultEmail: "admin@example.com"

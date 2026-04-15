@@ -1,0 +1,8 @@
+api:
+  # Listening IP; 0.0.0.0 means both internal and external IPs are listened to, default is recommended
+  # HTTP API 服务监听的 IP 地址。修改为具体 IPv4 地址以避免 IPv6 问题
+  listenIP: 192.168.31.166
+  # Listening ports; if multiple are configured, multiple instances will be launched
+  # admin 服务的http端口
+  ports: [ 10009 ]
+
