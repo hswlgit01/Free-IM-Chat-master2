@@ -2757,64 +2757,61 @@ func (w *TransactionService) QueryTransactionRecords(ctx context.Context, req *d
 			}
 		}
 
-		// 提取发送者信息
-		//record.Sender = &dto.TransactionUserInfo{}
-		//if senderUser, ok := transaction.SenderUser["user_id"]; ok {
-		//	if userId, ok := senderUser.(string); ok {
-		//		record.Sender.ImServerID = userId
-		//	}
-		//}
-		//if senderUser, ok := transaction.SenderUser["nickname"]; ok {
-		//	if nickname, ok := senderUser.(string); ok {
-		//		record.Sender.Nickname = nickname
-		//	}
-		//}
-		//if senderUser, ok := transaction.SenderUser["face_url"]; ok {
-		//	if faceUrl, ok := senderUser.(string); ok {
-		//		record.Sender.FaceURL = faceUrl
-		//	}
-		//}
-		//if senderAttr, ok := transaction.SenderAttr["account"]; ok {
-		//	if account, ok := senderAttr.(string); ok {
-		//		record.Sender.Account = account
-		//	}
-		//}
-		//if senderAttr, ok := transaction.SenderAttr["user_id"]; ok {
-		//	if userId, ok := senderAttr.(string); ok {
-		//		record.Sender.UserID = userId
-		//	}
-		//}
+		record.Sender = &dto.TransactionUserInfo{}
+		if senderUser, ok := transaction.SenderUser["user_id"]; ok {
+			if userId, ok := senderUser.(string); ok {
+				record.Sender.ImServerID = userId
+			}
+		}
+		if senderUser, ok := transaction.SenderUser["nickname"]; ok {
+			if nickname, ok := senderUser.(string); ok {
+				record.Sender.Nickname = nickname
+			}
+		}
+		if senderUser, ok := transaction.SenderUser["face_url"]; ok {
+			if faceUrl, ok := senderUser.(string); ok {
+				record.Sender.FaceURL = faceUrl
+			}
+		}
+		if senderAttr, ok := transaction.SenderAttr["account"]; ok {
+			if account, ok := senderAttr.(string); ok {
+				record.Sender.Account = account
+			}
+		}
+		if senderAttr, ok := transaction.SenderAttr["user_id"]; ok {
+			if userId, ok := senderAttr.(string); ok {
+				record.Sender.UserID = userId
+			}
+		}
 
-		// 提取接收者信息（如果是转账）
-		//if transaction.TransactionType == 1 { // 假设1是转账类型
-		//	record.Receiver = &dto.TransactionUserInfo{}
-		//	if receiverUser, ok := transaction.ReceiverUser["user_id"]; ok {
-		//		if userId, ok := receiverUser.(string); ok {
-		//			record.Receiver.ImServerID = userId
-		//		}
-		//	}
-		//	if receiverUser, ok := transaction.ReceiverUser["nickname"]; ok {
-		//		if nickname, ok := receiverUser.(string); ok {
-		//			record.Receiver.Nickname = nickname
-		//		}
-		//	}
-		//	if receiverUser, ok := transaction.ReceiverUser["face_url"]; ok {
-		//		if faceUrl, ok := receiverUser.(string); ok {
-		//			record.Receiver.FaceURL = faceUrl
-		//		}
-		//	}
-		//	// 处理ReceiverAttr（通过子查询获取）
-		//	if receiverAttrData, ok := transaction.ReceiverAttr["account"]; ok {
-		//		if account, ok := receiverAttrData.(string); ok {
-		//			record.Receiver.Account = account
-		//		}
-		//	}
-		//	if receiverAttrUserId, ok := transaction.ReceiverAttr["user_id"]; ok {
-		//		if userId, ok := receiverAttrUserId.(string); ok {
-		//			record.Receiver.UserID = userId
-		//		}
-		//	}
-		//}
+		if transaction.TransactionType == model.TransactionTypeTransfer {
+			record.Receiver = &dto.TransactionUserInfo{}
+			if receiverUser, ok := transaction.ReceiverUser["user_id"]; ok {
+				if userId, ok := receiverUser.(string); ok {
+					record.Receiver.ImServerID = userId
+				}
+			}
+			if receiverUser, ok := transaction.ReceiverUser["nickname"]; ok {
+				if nickname, ok := receiverUser.(string); ok {
+					record.Receiver.Nickname = nickname
+				}
+			}
+			if receiverUser, ok := transaction.ReceiverUser["face_url"]; ok {
+				if faceUrl, ok := receiverUser.(string); ok {
+					record.Receiver.FaceURL = faceUrl
+				}
+			}
+			if receiverAttrData, ok := transaction.ReceiverAttr["account"]; ok {
+				if account, ok := receiverAttrData.(string); ok {
+					record.Receiver.Account = account
+				}
+			}
+			if receiverAttrUserId, ok := transaction.ReceiverAttr["user_id"]; ok {
+				if userId, ok := receiverAttrUserId.(string); ok {
+					record.Receiver.UserID = userId
+				}
+			}
+		}
 
 		records = append(records, record)
 	}

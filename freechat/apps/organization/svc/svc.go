@@ -1651,6 +1651,18 @@ type UpdateUserCanSendFreeMsgReq struct {
 	CanSendFreeMsg int32  `json:"can_send_free_msg" binding:"gte=0,lte=1"` // 0=普通用户需好友验证，1=可跳过消息验证
 }
 
+func (w *OrganizationUserSvc) roleCanSendFreeMsg(ctx context.Context, orgId primitive.ObjectID, role model.OrganizationUserRole) (int32, error) {
+	orgRolePermissionDao := model.NewOrganizationRolePermissionDao(plugin.MongoCli().GetDB())
+	hasPermission, err := orgRolePermissionDao.ExistPermission(ctx, orgId, role, model.PermissionCodeFreePrivateChat)
+	if err != nil {
+		return 0, err
+	}
+	if hasPermission {
+		return 1, nil
+	}
+	return 0, nil
+}
+
 func (w *OrganizationUserSvc) UpdateWebUserRole(ctx context.Context, operatorId string, orgId primitive.ObjectID, params UpdateWebUserRoleReq) error {
 	mongoCli := plugin.MongoCli()
 	db := mongoCli.GetDB()
@@ -1666,6 +1678,11 @@ func (w *OrganizationUserSvc) UpdateWebUserRole(ctx context.Context, operatorId 
 	imApiCallerCtx := mctx.WithApiToken(ctxWithOpID, imApiCallerToken)
 
 	orgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserId, orgId)
+	if err != nil {
+		return err
+	}
+
+	targetCanSendFreeMsg, err := w.roleCanSendFreeMsg(ctx, orgId, params.Role)
 	if err != nil {
 		return err
 	}
@@ -1695,6 +1712,11 @@ func (w *OrganizationUserSvc) UpdateWebUserRole(ctx context.Context, operatorId 
 		}
 
 		err = imApiCaller.UpdateOrgUserInfo(imApiCallerCtx, orgUser.ImServerUserId, orgUser.OrganizationId.Hex(), string(params.Role))
+		if err != nil {
+			return err
+		}
+
+		err = imApiCaller.UpdateUserCanSendFreeMsg(imApiCallerCtx, orgUser.ImServerUserId, targetCanSendFreeMsg)
 		return err
 	})
 
@@ -2519,19 +2541,43 @@ func (w *OrgRolePermissionSvc) UpdateOrgRolePermission(ctx context.Context, req 
 	db := mongoCli.GetDB()
 	orgRolePermissionDao := model.NewOrganizationRolePermissionDao(db)
 
+	oldPermissions, err := orgRolePermissionDao.GetByOrgIdAndRole(ctx, req.OrgId, req.Role)
+	if err != nil {
+		return err
+	}
+
 	for _, code := range req.PermissionsCode {
 		if !model.IsValidPermissionCode(code) {
 			return fmt.Errorf("invalid permission_code: %s", code)
 		}
 	}
 
-	err := mongoCli.GetTx().Transaction(context.TODO(), func(sessionCtx context.Context) error {
+	roleCanSendFreeMsg := int32(0)
+	if slices.Contains(req.PermissionsCode, model.PermissionCodeFreePrivateChat) {
+		roleCanSendFreeMsg = 1
+	}
+	oldRoleCanSendFreeMsg := int32(0)
+	for _, permission := range oldPermissions {
+		if permission != nil && permission.PermissionCode == model.PermissionCodeFreePrivateChat {
+			oldRoleCanSendFreeMsg = 1
+			break
+		}
+	}
+	restoreCodes := make([]model.PermissionCode, 0, len(oldPermissions))
+	for _, permission := range oldPermissions {
+		if permission == nil {
+			continue
+		}
+		restoreCodes = append(restoreCodes, permission.PermissionCode)
+	}
+
+	writeRolePermissions := func(sessionCtx context.Context, codes []model.PermissionCode) error {
 		err := orgRolePermissionDao.DeleteByOrgIdAndRole(sessionCtx, req.OrgId, req.Role)
 		if err != nil {
 			return err
 		}
 
-		for _, code := range req.PermissionsCode {
+		for _, code := range codes {
 			err = orgRolePermissionDao.Create(sessionCtx, &model.OrganizationRolePermission{
 				OrgId:          req.OrgId,
 				Role:           req.Role,
@@ -2543,14 +2589,58 @@ func (w *OrgRolePermissionSvc) UpdateOrgRolePermission(ctx context.Context, req 
 		}
 
 		return nil
+	}
+
+	err = mongoCli.GetTx().Transaction(context.TODO(), func(sessionCtx context.Context) error {
+		return writeRolePermissions(sessionCtx, req.PermissionsCode)
 	})
+	if err != nil {
+		return err
+	}
 
 	// 直接查询该组织下具有指定角色的所有用户的imServerUserId
 	orgUserDao := model.NewOrganizationUserDao(db)
 	imServerUserIDs, err := orgUserDao.GetIMServerUserIdsByOrgIdAndRole(ctx, req.OrgId, req.Role)
 	if err != nil {
-		log.ZWarn(ctx, "查询组织用户imServerUserId失败", err, "org_id", req.OrgId.Hex(), "role", req.Role)
-	} else if len(imServerUserIDs) > 0 {
+		return err
+	}
+	if len(imServerUserIDs) > 0 {
+		imApiCaller := plugin.ImApiCaller()
+		apiCtx := context.WithValue(context.Background(), constantpb.OperationID, operationID)
+		imToken, tokenErr := imApiCaller.ImAdminTokenWithDefaultAdmin(apiCtx)
+		if tokenErr != nil {
+			restoreErr := mongoCli.GetTx().Transaction(context.TODO(), func(sessionCtx context.Context) error {
+				return writeRolePermissions(sessionCtx, restoreCodes)
+			})
+			if restoreErr != nil {
+				log.ZError(ctx, "角色权限同步失败且回滚数据库失败", restoreErr, "org_id", req.OrgId.Hex(), "role", req.Role)
+			}
+			return tokenErr
+		} else {
+			apiCtx = mctx.WithApiToken(apiCtx, imToken)
+			syncedUserIDs := make([]string, 0, len(imServerUserIDs))
+			for _, imServerUserID := range imServerUserIDs {
+				if imServerUserID == "" {
+					continue
+				}
+				if syncErr := imApiCaller.UpdateUserCanSendFreeMsg(apiCtx, imServerUserID, roleCanSendFreeMsg); syncErr != nil {
+					restoreErr := mongoCli.GetTx().Transaction(context.TODO(), func(sessionCtx context.Context) error {
+						return writeRolePermissions(sessionCtx, restoreCodes)
+					})
+					if restoreErr != nil {
+						log.ZError(ctx, "同步角色私聊权限失败且回滚数据库失败", restoreErr, "org_id", req.OrgId.Hex(), "role", req.Role)
+					}
+					for _, syncedUserID := range syncedUserIDs {
+						if rollbackSyncErr := imApiCaller.UpdateUserCanSendFreeMsg(apiCtx, syncedUserID, oldRoleCanSendFreeMsg); rollbackSyncErr != nil {
+							log.ZError(ctx, "同步角色私聊权限失败且回滚IM状态失败", rollbackSyncErr, "org_id", req.OrgId.Hex(), "role", req.Role, "im_server_user_id", syncedUserID)
+						}
+					}
+					return syncErr
+				}
+				syncedUserIDs = append(syncedUserIDs, imServerUserID)
+			}
+		}
+
 		// 使用协程异步批量通知用户权限变更(如果配置启用)
 		if plugin.ChatCfg().Share.EnablePermissionNotifications {
 			go func() {
@@ -2561,7 +2651,7 @@ func (w *OrgRolePermissionSvc) UpdateOrgRolePermission(ctx context.Context, req 
 		}
 	}
 
-	return err
+	return nil
 }
 
 // notifyUserPermissionChange 通知单个用户权限变更

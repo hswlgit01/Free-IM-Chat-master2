@@ -164,7 +164,9 @@ func (o *chatSvr) UpdateUserInfo(ctx context.Context, req *chat.UpdateUserInfoRe
 	if err != nil {
 		return nil, err
 	}
-	req.UserID = opUserID
+	if req.UserID == "" {
+		req.UserID = opUserID
+	}
 	if err = o.checkUpdateInfo(ctx, req); err != nil {
 		log.ZError(ctx, "checkUpdateInfo error", err, "req", req)
 		return nil, err
@@ -226,7 +228,7 @@ func (o *chatSvr) UpdateUserInfo(ctx context.Context, req *chat.UpdateUserInfoRe
 	} else {
 		log.ZInfo(ctx, "没有需要更新的字段", "userID", req.UserID)
 	}
-	orgUsers, err := o.Database.FindOrgUserByUserIds(ctx, []string{opUserID})
+	orgUsers, err := o.Database.FindOrgUserByUserIds(ctx, []string{req.UserID})
 	if err != nil {
 		log.ZError(ctx, "FindOrgUserByUserIds error", err, "req", req)
 		return nil, err

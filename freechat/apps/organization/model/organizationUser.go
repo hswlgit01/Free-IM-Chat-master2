@@ -1044,6 +1044,54 @@ func (o *OrganizationUserDao) CountByOrgIdAndStatus(ctx context.Context, organiz
 	return mongoutil.Count(ctx, o.Collection, filter)
 }
 
+func (o *OrganizationUserDao) CountVerifiedByOrgId(ctx context.Context, organizationId primitive.ObjectID, notInImUserIds []string, roles []OrganizationUserRole) (int64, error) {
+	match := bson.M{
+		"organization_id": organizationId,
+	}
+
+	if len(notInImUserIds) > 0 {
+		match["im_server_user_id"] = bson.M{"$nin": notInImUserIds}
+	}
+
+	if len(roles) > 0 {
+		match["role"] = bson.M{"$in": roles}
+	}
+
+	pipeline := []bson.M{
+		{"$match": match},
+		{"$lookup": bson.M{
+			"from":         "attribute",
+			"localField":   "user_id",
+			"foreignField": "user_id",
+			"as":           "attribute",
+		}},
+		{"$unwind": bson.M{
+			"path":                       "$attribute",
+			"preserveNullAndEmptyArrays": false,
+		}},
+		{"$match": bson.M{
+			"attribute.is_real_name_verified": true,
+		}},
+		{"$group": bson.M{
+			"_id": "$user_id",
+		}},
+		{"$count": "count"},
+	}
+
+	type countResult struct {
+		Count int64 `bson:"count"`
+	}
+
+	result, err := mongoutil.Aggregate[*countResult](ctx, o.Collection, pipeline)
+	if err != nil {
+		return 0, err
+	}
+	if len(result) == 0 || result[0] == nil {
+		return 0, nil
+	}
+	return result[0].Count, nil
+}
+
 // GetFirstSuperAdminByOrgId 获取指定组织的第一个超级管理员（按创建时间正序）
 func (o *OrganizationUserDao) GetFirstSuperAdminByOrgId(ctx context.Context, organizationId primitive.ObjectID) (*OrganizationUser, error) {
 	filter := bson.M{

@@ -21,6 +21,7 @@ type SystemStatistics struct {
 	Register        int32  `json:"register" bson:"register"`                     // 当日邀请注册人数
 	Sign            int32  `json:"sign" bson:"sign"`                             // 当日邀请用户签到人数
 	AllCheckin      int32  `json:"all_checkin" bson:"all_checkin"`               // 下级所有签到人数（当日所有被邀请用户签到总数）
+	TeamCheckin     int32  `json:"team_checkin" bson:"team_checkin"`             // 整个团队签到人数（包含所有层级成员）
 
 	// 新增字段：实名认证相关统计
 	Verified   int32 `json:"verified" bson:"verified"`     // 已实名用户数
@@ -523,6 +524,134 @@ func (o *StatisticsDao) GetInviteDailyCheckinStats(ctx context.Context, orgId pr
 			},
 		},
 		// 再按日期+邀请人汇总
+		{
+			"$group": bson.M{
+				"_id": bson.M{
+					"date":               "$_id.date",
+					"inviter_im_user_id": "$_id.inviter_im_user_id",
+				},
+				"count": bson.M{
+					"$sum": 1,
+				},
+			},
+		},
+		{
+			"$project": bson.M{
+				"date":               "$_id.date",
+				"inviter_im_user_id": "$_id.inviter_im_user_id",
+				"count":              1,
+				"_id":                0,
+			},
+		},
+	}
+
+	coll := plugin.MongoCli().GetDB().Collection("organization_user")
+	return mongoutil.Aggregate[*InviteStatisticsCount](ctx, coll, pipeline)
+}
+
+// GetInviteDailyTeamCheckinStats 统计：按祖先业务员+日期的整个团队签到人数（checkin.created_at）
+func (o *StatisticsDao) GetInviteDailyTeamCheckinStats(ctx context.Context, orgId primitive.ObjectID,
+	startTime, endTime time.Time) ([]*InviteStatisticsCount, error) {
+	pipeline := []bson.M{
+		{
+			"$match": bson.M{
+				"organization_id": orgId,
+				"user_type":       bson.M{"$ne": "ORGANIZATION"},
+				"ancestor_path": bson.M{
+					"$exists": true,
+					"$ne":     []interface{}{},
+				},
+				"im_server_user_id": bson.M{
+					"$exists": true,
+					"$nin":    []interface{}{"", nil},
+				},
+			},
+		},
+		{
+			"$lookup": bson.M{
+				"from":         "checkin",
+				"localField":   "im_server_user_id",
+				"foreignField": "im_server_user_id",
+				"as":           "checkin",
+			},
+		},
+		{
+			"$unwind": bson.M{
+				"path":                       "$checkin",
+				"preserveNullAndEmptyArrays": false,
+			},
+		},
+		{
+			"$match": bson.M{
+				"checkin.created_at": bson.M{
+					"$gte": startTime,
+					"$lte": endTime,
+				},
+			},
+		},
+		{
+			"$unwind": bson.M{
+				"path":                       "$ancestor_path",
+				"preserveNullAndEmptyArrays": false,
+			},
+		},
+		{
+			"$lookup": bson.M{
+				"from": "organization_user",
+				"let": bson.M{
+					"ancestor_user_id": "$ancestor_path",
+					"organization_id":  "$organization_id",
+				},
+				"pipeline": []bson.M{
+					{
+						"$match": bson.M{
+							"$expr": bson.M{
+								"$and": []bson.M{
+									{"$eq": []interface{}{"$user_id", "$$ancestor_user_id"}},
+									{"$eq": []interface{}{"$organization_id", "$$organization_id"}},
+								},
+							},
+						},
+					},
+					{
+						"$match": bson.M{
+							"user_type": bson.M{"$ne": "ORGANIZATION"},
+							"im_server_user_id": bson.M{
+								"$exists": true,
+								"$nin":    []interface{}{"", nil},
+							},
+						},
+					},
+					{
+						"$project": bson.M{
+							"im_server_user_id": 1,
+						},
+					},
+				},
+				"as": "ancestor_user",
+			},
+		},
+		{
+			"$unwind": bson.M{
+				"path":                       "$ancestor_user",
+				"preserveNullAndEmptyArrays": false,
+			},
+		},
+		{
+			"$group": bson.M{
+				"_id": bson.M{
+					"date": bson.M{
+						"$dateToString": bson.M{
+							"format":   "%Y%m%d",
+							"date":     "$checkin.created_at",
+							"timezone": "+08:00",
+						},
+					},
+					"inviter_im_user_id": "$ancestor_user.im_server_user_id",
+					"user_id":            "$user_id",
+				},
+			},
+		},
 		{
 			"$group": bson.M{
 				"_id": bson.M{

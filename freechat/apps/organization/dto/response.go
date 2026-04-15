@@ -84,8 +84,9 @@ type OrganizationResp struct {
 
 	GroupTotal int64 `json:"group_total"`
 
-	WalletExist bool `json:"wallet_exist"`
-	UserTotal   int  `json:"user_total"`
+	WalletExist       bool `json:"wallet_exist"`
+	UserTotal         int  `json:"user_total"`
+	VerifiedUserTotal int  `json:"verified_user_total"`
 
 	// 新增：创建者信息
 	CreatorInfo *userDto.AttributeResp `json:"creator_info,omitempty"`
@@ -139,6 +140,15 @@ func NewOrganizationResp(org *model.Organization, operationID string) (*Organiza
 		return nil, err
 	}
 
+	verifiedUserTotal, err := orgUserDao.CountVerifiedByOrgId(context.TODO(), org.ID, notInImUserIds, []model.OrganizationUserRole{
+		model.OrganizationUserNormalRole,
+		model.OrganizationUserGroupManagerRole,
+		model.OrganizationUserTermManagerRole,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	attributeCache := chatCache.NewAttributeCacheRedis(plugin.RedisCli(), mongoCli.GetDB())
 
 	orgCreatorUser, err := attributeCache.Take(context.TODO(), org.CreatorId)
@@ -166,6 +176,7 @@ func NewOrganizationResp(org *model.Organization, operationID string) (*Organiza
 		GroupTotal:             total,
 		WalletExist:            walletExist,
 		UserTotal:              int(userTotal),
+		VerifiedUserTotal:      int(verifiedUserTotal),
 		Logo:                   org.Logo,
 		AccountPrefix:          accountPrefix,
 		CreatorInfo:            creatorInfo,                // 新增：创建者信息
