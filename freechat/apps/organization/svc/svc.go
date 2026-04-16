@@ -2,6 +2,8 @@ package svc
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +43,7 @@ import (
 	"github.com/openimsdk/chat/pkg/common/imapi"
 	"github.com/openimsdk/chat/pkg/common/mctx"
 	pkgConstant "github.com/openimsdk/chat/pkg/constant"
+	adminpb "github.com/openimsdk/chat/pkg/protocol/admin"
 	constantpb "github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/tools/errs"
 	"github.com/openimsdk/tools/log"
@@ -1505,6 +1508,37 @@ type CreateOrganizationBackendAdminReq struct {
 	Password string `json:"password"  binding:"required"`
 }
 
+type ResetOrganizationUserPasswordReq struct {
+	UserID      string `json:"userID" binding:"required"`
+	NewPassword string `json:"newPassword" binding:"required"`
+}
+
+func orgPasswordIsMD5Hex(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeOrgPasswordForStorage(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.ToLower(p)
+	if orgPasswordIsMD5Hex(p) {
+		return p
+	}
+	sum := md5.Sum([]byte(p))
+	return hex.EncodeToString(sum[:])
+}
+
 func (w *OrganizationUserSvc) CreateOrganizationBackendAdmin(operatorId string, orgId primitive.ObjectID, params CreateOrganizationBackendAdminReq) error {
 	mongoCli := plugin.MongoCli()
 	db := mongoCli.GetDB()
@@ -1639,6 +1673,55 @@ func (w *OrganizationUserSvc) CreateOrganizationBackendAdmin(operatorId string, 
 		return err
 	})
 	return errs.Unwrap(err)
+}
+
+func (w *OrganizationUserSvc) ResetOrganizationUserPassword(ctx context.Context, operationID string, orgId primitive.ObjectID, operator *model.OrganizationUser, params ResetOrganizationUserPasswordReq) error {
+	mongoCli := plugin.MongoCli()
+	db := mongoCli.GetDB()
+	orgUserDao := model.NewOrganizationUserDao(db)
+	accountDao := chatModel.NewAccountDao(db)
+
+	if operator == nil {
+		return freeErrors.ForbiddenErr("operator not found")
+	}
+
+	targetOrgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserID, orgId)
+	if err != nil {
+		return err
+	}
+
+	if operator.Role != model.OrganizationUserSuperAdminRole && targetOrgUser.Role == model.OrganizationUserSuperAdminRole {
+		return freeErrors.ForbiddenErr("backend admin cannot reset super admin password")
+	}
+
+	if strings.TrimSpace(params.NewPassword) == "" {
+		return errs.ErrArgs.WrapMsg("new password must be set")
+	}
+	password := normalizeOrgPasswordForStorage(params.NewPassword)
+
+	imApiCaller := plugin.ImApiCaller()
+	apiCtx := context.WithValue(ctx, constantpb.OperationID, operationID)
+	imToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(apiCtx)
+	if err != nil {
+		return err
+	}
+	apiCtx = mctx.WithApiToken(apiCtx, imToken)
+
+	if err := accountDao.UpdatePassword(ctx, targetOrgUser.UserId, password); err != nil {
+		return err
+	}
+
+	if _, err := plugin.AdminClient().InvalidateToken(ctx, &adminpb.InvalidateTokenReq{UserID: targetOrgUser.UserId}); err != nil {
+		return err
+	}
+
+	if targetOrgUser.ImServerUserId != "" {
+		if err := imApiCaller.ForceOffLine(apiCtx, targetOrgUser.ImServerUserId); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 type UpdateWebUserRoleReq struct {
