@@ -556,7 +556,10 @@ func (o *StatisticsDao) GetInviteDailyTeamCheckinStats(ctx context.Context, orgI
 		{
 			"$match": bson.M{
 				"organization_id": orgId,
-				"user_type":       bson.M{"$ne": "ORGANIZATION"},
+				"status":          bson.M{"$ne": "Disable"},
+				"role": bson.M{
+					"$nin": []interface{}{"SuperAdmin", "BackendAdmin"},
+				},
 				"ancestor_path": bson.M{
 					"$exists": true,
 					"$ne":     []interface{}{},
@@ -616,6 +619,10 @@ func (o *StatisticsDao) GetInviteDailyTeamCheckinStats(ctx context.Context, orgI
 					{
 						"$match": bson.M{
 							"user_type": bson.M{"$ne": "ORGANIZATION"},
+							"status":    bson.M{"$ne": "Disable"},
+							"role": bson.M{
+								"$nin": []interface{}{"SuperAdmin", "BackendAdmin"},
+							},
 							"im_server_user_id": bson.M{
 								"$exists": true,
 								"$nin":    []interface{}{"", nil},
