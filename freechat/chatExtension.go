@@ -598,6 +598,7 @@ func registerDepAdminRouter(router *gin.Engine) {
 		orgUserApi.POST("/update_web_user_role", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateWebUserRole)            // 修改web用户角色,添加群组管理员
 		orgUserApi.POST("/update_can_send_free_msg", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserCanSendFreeMsg) // 更新用户是否可自由发送消息
 		orgUserApi.POST("/reset_password", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostResetOrgUserPassword)               // 组织后台重置组织用户密码
+		orgUserApi.POST("/update_nickname", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateOrgUserNickname)             // 组织后台修改组织用户昵称
 	}
 
 	// 用户标签管理路由 - 集成到组织用户控制器中
