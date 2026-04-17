@@ -606,6 +606,35 @@ func (w *OrganizationUserCtl) PostResetOrgUserPassword(c *gin.Context) {
 	apiresp.GinSuccess(c, map[string]interface{}{})
 }
 
+func (w *OrganizationUserCtl) PostUpdateOrgUserNickname(c *gin.Context) {
+	data := svc.UpdateOrganizationUserNicknameReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	operationID, err := middleware.GetOperationId(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	err = orgUserSvc.UpdateOrganizationUserNickname(c, operationID, org.ID, org.OrgUser, data)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
 func (w *OrganizationUserCtl) PostUpdateUserStatus(c *gin.Context) {
 	data := svc.UpdateUserStatusReq{}
 	if err := c.ShouldBind(&data); err != nil {

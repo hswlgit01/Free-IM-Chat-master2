@@ -1513,6 +1513,11 @@ type ResetOrganizationUserPasswordReq struct {
 	NewPassword string `json:"newPassword" binding:"required"`
 }
 
+type UpdateOrganizationUserNicknameReq struct {
+	UserID   string `json:"userID" binding:"required"`
+	Nickname string `json:"nickname" binding:"required"`
+}
+
 func orgPasswordIsMD5Hex(s string) bool {
 	if len(s) != 32 {
 		return false
@@ -1722,6 +1727,45 @@ func (w *OrganizationUserSvc) ResetOrganizationUserPassword(ctx context.Context,
 	}
 
 	return nil
+}
+
+func (w *OrganizationUserSvc) UpdateOrganizationUserNickname(ctx context.Context, operationID string, orgId primitive.ObjectID, operator *model.OrganizationUser, params UpdateOrganizationUserNicknameReq) error {
+	mongoCli := plugin.MongoCli()
+	db := mongoCli.GetDB()
+	orgUserDao := model.NewOrganizationUserDao(db)
+	userDao := openImModel.NewUserDao(db)
+
+	if operator == nil {
+		return freeErrors.ForbiddenErr("operator not found")
+	}
+
+	targetOrgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserID, orgId)
+	if err != nil {
+		return err
+	}
+	if operator.Role != model.OrganizationUserSuperAdminRole && targetOrgUser.Role == model.OrganizationUserSuperAdminRole {
+		return freeErrors.ForbiddenErr("backend admin cannot update super admin nickname")
+	}
+
+	imUser, err := userDao.Take(ctx, targetOrgUser.ImServerUserId)
+	if err != nil {
+		return err
+	}
+
+	nickname := strings.TrimSpace(params.Nickname)
+	if err := ValidateAppUserNickname(ctx, db, orgId, nickname, targetOrgUser.ImServerUserId); err != nil {
+		return err
+	}
+
+	imApiCaller := plugin.ImApiCaller()
+	apiCtx := context.WithValue(ctx, constantpb.OperationID, operationID)
+	imToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(apiCtx)
+	if err != nil {
+		return err
+	}
+	apiCtx = mctx.WithApiToken(apiCtx, imToken)
+
+	return imApiCaller.UpdateUserInfo(apiCtx, targetOrgUser.ImServerUserId, nickname, imUser.FaceURL)
 }
 
 type UpdateWebUserRoleReq struct {
