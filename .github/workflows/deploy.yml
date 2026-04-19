@@ -7,7 +7,7 @@ name: Build & Deploy Chat
 
 on:
   push:
-    branches: [master]        # 触发条件：main 分支推送
+    branches: [master]        # master 分支推送
   workflow_dispatch:        # 支持手动触发
 
 jobs:
@@ -21,11 +21,11 @@ jobs:
 
       # ----- 2. 构建镜像 -----
       - name: Build Docker image
-        run: docker build -t Free-IM-Chat:latest .
+        run: docker build -t free-im-chat:latest .
 
       # ----- 3. 压缩镜像（方便传输）-----
       - name: Save image to file
-        run: docker save Free-IM-Chat:latest | gzip > Free-IM-Chat.tar.gz
+        run: docker save free-im-chat:latest | gzip > Free-IM-Chat.tar.gz
 
       # ----- 4. 上传到服务器 -----
       - name: Copy to server
@@ -55,5 +55,5 @@ jobs:
               --restart unless-stopped \                       # 自动重启策略
               -v /data/app/chat/config:/app/config \           # 挂载配置文件目录
               -v /data/logs/chat:/app/logs \                   # 挂载日志目录
-              Free-IM-Chat:latest                              # 使用最新版本镜像运行容器
+              free-im-chat:latest                              # 使用最新版本镜像运行容器
             docker ps | grep Free-IM-Chat                      # 验证运行状态
