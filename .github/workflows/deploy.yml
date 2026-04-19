@@ -1,0 +1,59 @@
+# ============================================
+# Free-IM-Chat CI/CD 流水线配置
+# 功能：代码推送后自动构建镜像并部署到服务器
+# ============================================
+
+name: Build & Deploy Chat
+
+on:
+  push:
+    branches: [master]        # 触发条件：main 分支推送
+  workflow_dispatch:        # 支持手动触发
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest  # 使用 GitHub 免费虚拟机
+    
+    steps:
+      # ----- 1. 拉取代码 -----
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ----- 2. 构建镜像 -----
+      - name: Build Docker image
+        run: docker build -t Free-IM-Chat:latest .
+
+      # ----- 3. 压缩镜像（方便传输）-----
+      - name: Save image to file
+        run: docker save Free-IM-Chat:latest | gzip > Free-IM-Chat.tar.gz
+
+      # ----- 4. 上传到服务器 -----
+      - name: Copy to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          source: "Free-IM-Chat.tar.gz"
+          target: "/root/deploy/"
+
+      # ----- 5. 服务器部署 -----
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script: |
+            docker load < /root/deploy/Free-IM-Chat.tar.gz     # 加载镜像
+            rm -f /root/deploy/Free-IM-Chat.tar.gz             # 清理压缩包
+            docker stop Free-IM-Chat 2>/dev/null || true       # 停止旧容器
+            docker rm Free-IM-Chat 2>/dev/null || true         # 删除旧容器
+            docker run -d \                                    # 运行容器 -d 分离模式 后台运行
+              --name Free-IM-Chat \                            # 容器名称
+              --network host \                                 # 使用宿主机网络
+              --restart unless-stopped \                       # 自动重启策略
+              -v /data/app/chat/config:/app/config \           # 挂载配置文件目录
+              -v /data/logs/chat:/app/logs \                   # 挂载日志目录
+              Free-IM-Chat:latest                              # 使用最新版本镜像运行容器
+            docker ps | grep Free-IM-Chat                      # 验证运行状态
