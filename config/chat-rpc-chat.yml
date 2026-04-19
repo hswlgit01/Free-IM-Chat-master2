@@ -59,7 +59,7 @@ verifyCode:
 
 # 音视频相关配置
 liveKit:
-  backupUrls: [ "ws://192.168.31.166:7880", ]  # LIVEKIT_URL, LiveKit server address and port (本地调试使用localhost)
+  backupUrls: [ "ws://localhost:7880", ]  # LIVEKIT_URL, LiveKit server address and port (本地调试使用localhost)
   key: "devkey"
   secret: "secret"
 

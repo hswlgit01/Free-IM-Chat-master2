@@ -2,7 +2,7 @@ openIM:
   # OpenIM API address
   # 远程 open IM服务的配置,地址+端口,chat服务与openIm服务之间的通信是采用的http的形式通信
   # 注意: 这个地址会用于生成对外访问的URL(如币种图标),请使用外部可访问的地址
-  apiURL: http://192.168.31.166:10002
+  apiURL: http://localhost:10002
   # OpenIM secret key, must be consistent with OpenIM
   # IM的安全口令,要和IM保持一致,否则无法通信
   secret: test
