@@ -45,15 +45,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            docker load < /root/deploy/Free-IM-Chat.tar.gz     # 加载镜像
-            rm -f /root/deploy/Free-IM-Chat.tar.gz             # 清理压缩包
-            docker stop Free-IM-Chat 2>/dev/null || true       # 停止旧容器
-            docker rm Free-IM-Chat 2>/dev/null || true         # 删除旧容器
-            docker run -d \                                    # 运行容器 -d 分离模式 后台运行
-              --name Free-IM-Chat \                            # 容器名称
-              --network host \                                 # 使用宿主机网络
-              --restart unless-stopped \                       # 自动重启策略
-              -v /data/app/chat/config:/app/config \           # 挂载配置文件目录
-              -v /data/logs/chat:/app/logs \                   # 挂载日志目录
-              free-im-chat:latest                              # 使用最新版本镜像运行容器
-            docker ps | grep Free-IM-Chat                      # 验证运行状态
+            docker load < /root/deploy/free-im-chat.tar.gz
+            rm -f /root/deploy/free-im-chat.tar.gz
+            docker stop free-im-chat 2>/dev/null || true
+            docker rm free-im-chat 2>/dev/null || true
+            docker run -d --name free-im-chat --network host --restart unless-stopped -v /data/app/chat/config:/app/config -v /data/logs/chat:/app/logs free-im-chat:latest
+            docker ps | grep free-im-chat
