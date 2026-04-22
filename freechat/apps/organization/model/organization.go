@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/openimsdk/chat/freechat/utils"
@@ -246,4 +247,38 @@ func (o *OrganizationDao) SelectJoinAll(ctx context.Context, keyword string,
 	}
 
 	return total, result, nil
+}
+
+// MarshalJSON 自定义 Organization 的 JSON 序列化
+func (o Organization) MarshalJSON() ([]byte, error) {
+	type Alias Organization
+	return json.Marshal(&struct {
+		ID string `json:"id"`
+		*Alias
+	}{
+		ID:    o.ID.Hex(),
+		Alias: (*Alias)(&o),
+	})
+}
+
+// UnmarshalJSON 自定义 Organization 的 JSON 反序列化
+func (o *Organization) UnmarshalJSON(data []byte) error {
+	type Alias Organization
+	aux := &struct {
+		ID string `json:"id"`
+		*Alias
+	}{
+		Alias: (*Alias)(o),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.ID != "" {
+		objectID, err := primitive.ObjectIDFromHex(aux.ID)
+		if err != nil {
+			return err
+		}
+		o.ID = objectID
+	}
+	return nil
 }

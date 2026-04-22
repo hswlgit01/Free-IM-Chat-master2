@@ -73,6 +73,30 @@ func Start(ctx context.Context, index int, cfg *Config) error {
 		if err != nil {
 			return err
 		}
+	} else {
+		// 本地测试环境：直接连接到本地 RPC 服务
+		// 从配置文件读取端口，如果未配置则使用默认值
+		chatPort := 30300
+		adminPort := 30200
+		
+		if len(cfg.ChatRpcConfig.RPC.Ports) > 0 {
+			chatPort = cfg.ChatRpcConfig.RPC.Ports[0]
+		}
+		
+		chatAddr := fmt.Sprintf("127.0.0.1:%d", chatPort)
+		adminAddr := fmt.Sprintf("127.0.0.1:%d", adminPort)
+		
+		log.ZInfo(ctx, "local test mode: dialing rpc services directly", "chatAddr", chatAddr, "adminAddr", adminAddr)
+		
+		chatConn, err = grpc.DialContext(ctx, chatAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), mw.GrpcClient())
+		if err != nil {
+			return errs.WrapMsg(err, "failed to dial chat rpc")
+		}
+		
+		adminConn, err = grpc.DialContext(ctx, adminAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), mw.GrpcClient())
+		if err != nil {
+			return errs.WrapMsg(err, "failed to dial admin rpc")
+		}
 	}
 
 	chatClient := chatclient.NewChatClient(chatConn)

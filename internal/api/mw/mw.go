@@ -17,7 +17,9 @@ package mw
 import (
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/openimsdk/chat/freechat/utils"
 
@@ -35,6 +37,15 @@ func New(client admin.AdminClient) *MW {
 
 type MW struct {
 	client admin.AdminClient
+}
+
+const defaultLocalTestUserID = "7922150030"
+
+func localTestUserID() string {
+	if userID := strings.TrimSpace(os.Getenv("LOCAL_TEST_USER_ID")); userID != "" {
+		return userID
+	}
+	return defaultLocalTestUserID
 }
 
 func (o *MW) parseToken(c *gin.Context) (string, int32, string, error) {
@@ -88,7 +99,11 @@ func (o *MW) setToken(c *gin.Context, userID string, userType int32) {
 
 func (o *MW) CheckToken(c *gin.Context) {
 	if utils.IsLocalTestEnv() {
-		o.setToken(c, "7922150030", constant.NormalUser)
+		if userID, userType, _, err := o.parseToken(c); err == nil && strings.TrimSpace(userID) != "" {
+			o.setToken(c, userID, userType)
+			return
+		}
+		o.setToken(c, localTestUserID(), constant.NormalUser)
 		return
 	}
 	userID, userType, token, err := o.parseToken(c)

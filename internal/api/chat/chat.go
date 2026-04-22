@@ -204,8 +204,16 @@ func (o *Api) Login(c *gin.Context) {
 		apiresp.GinError(c, err)
 		return
 	}
+	
+	// 获取用户的IM Token
+	imToken, err := o.imApiCaller.GetUserToken(apiCtx, resp.UserID, req.Platform)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	
 	apiresp.GinSuccess(c, &apistruct.LoginResp{
-		//ImToken:   imToken,
+		ImToken:   imToken,
 		UserID:    resp.UserID,
 		ChatToken: resp.ChatToken,
 	})

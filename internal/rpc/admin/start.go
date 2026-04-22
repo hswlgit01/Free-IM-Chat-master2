@@ -2,11 +2,16 @@ package admin
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"math/rand"
 	"time"
 
 	"github.com/openimsdk/chat/pkg/common/config"
+	"github.com/openimsdk/chat/pkg/common/constant"
 	"github.com/openimsdk/chat/pkg/common/db/database"
+	"github.com/openimsdk/chat/pkg/common/db/dbutil"
+	adminTable "github.com/openimsdk/chat/pkg/common/db/table/admin"
 	"github.com/openimsdk/chat/pkg/common/tokenverify"
 	adminpb "github.com/openimsdk/chat/pkg/protocol/admin"
 	"github.com/openimsdk/chat/pkg/protocol/chat"
@@ -60,10 +65,9 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 		Expires: time.Duration(config.RpcConfig.TokenPolicy.Expire) * time.Hour * 24,
 		Secret:  config.RpcConfig.Secret,
 	}
-	// 已禁用：启动时自动写入默认 Chat 管理员账号（避免启动期写库；新环境需自行插入 admin 或恢复下方 initAdmin 调用）
-	// if err := srv.initAdmin(ctx, config.Share.ChatAdmin, config.Share.OpenIM.AdminUserID); err != nil {
-	// 	return err
-	// }
+	if err := srv.initAdmin(ctx, config.Share.ChatAdmin, config.Share.OpenIM.AdminUserID); err != nil {
+		return err
+	}
 	adminpb.RegisterAdminServer(server, &srv)
 	return nil
 }
@@ -76,7 +80,6 @@ type adminServer struct {
 }
 
 func (o *adminServer) initAdmin(ctx context.Context, admins []string, imUserID string) error {
-	/* 已禁用：启动时种子数据（恢复时请取消 admin Start 中对 initAdmin 的调用注释）
 	for _, account := range admins {
 		if _, err := o.Database.GetAdmin(ctx, account); err == nil {
 			continue
@@ -84,17 +87,16 @@ func (o *adminServer) initAdmin(ctx context.Context, admins []string, imUserID s
 			return err
 		}
 		sum := md5.Sum([]byte(account))
-		a := admin.Admin{
+		a := adminTable.Admin{
 			Account:    account,
 			UserID:     imUserID,
 			Password:   hex.EncodeToString(sum[:]),
 			Level:      constant.DefaultAdminLevel,
 			CreateTime: time.Now(),
 		}
-		if err := o.Database.AddAdminAccount(ctx, []*admin.Admin{&a}); err != nil {
+		if err := o.Database.AddAdminAccount(ctx, []*adminTable.Admin{&a}); err != nil {
 			return err
 		}
 	}
-	*/
 	return nil
 }
