@@ -1,43 +1,37 @@
 # ============================================
-# Free-IM-Chat CI/CD 流水线配置
-# 功能：代码推送后自动构建镜像并部署到服务器
+# Free-IM-Chat CI/CD
 # ============================================
 
 name: Build & Deploy Chat
 
 on:
   push:
-    branches: [master]        # master 分支推送
-  workflow_dispatch:        # 支持手动触发
+    branches: [master, dev]
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest  # 使用 GitHub 免费虚拟机
-    
+    runs-on: ubuntu-latest
+
     steps:
-      # ----- 1. 拉取代码 -----
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ----- 2. 构建镜像 -----
       - name: Build Docker image
-        run: docker build -t free-im-chat:latest .
+        run: docker build -t freechat-chat:latest .
 
-      # ----- 3. 压缩镜像（方便传输）-----
       - name: Save image to file
-        run: docker save free-im-chat:latest | gzip > Free-IM-Chat.tar.gz
+        run: docker save freechat-chat:latest | gzip > freechat-chat.tar.gz
 
-      # ----- 4. 上传到服务器 -----
       - name: Copy to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
-          source: "Free-IM-Chat.tar.gz"
+          source: "freechat-chat.tar.gz"
           target: "/root/deploy/"
 
-      # ----- 5. 服务器部署 -----
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -45,9 +39,16 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASSWORD }}
           script: |
-            docker load < /root/deploy/free-im-chat.tar.gz
-            rm -f /root/deploy/free-im-chat.tar.gz
-            docker stop free-im-chat 2>/dev/null || true
-            docker rm free-im-chat 2>/dev/null || true
-            docker run -d --name free-im-chat --network host --restart unless-stopped -v /data/app/chat/config:/app/config -v /data/logs/chat:/app/logs free-im-chat:latest
-            docker ps | grep free-im-chat
+            set -e
+            docker stop freechat-chat 2>/dev/null || true
+            docker rm   freechat-chat 2>/dev/null || true
+            docker rmi  freechat-chat:latest 2>/dev/null || true
+            docker load < /root/deploy/freechat-chat.tar.gz
+            rm -f /root/deploy/freechat-chat.tar.gz
+            docker run -d --name freechat-chat \
+              --network host --restart unless-stopped \
+              -v /data/app/chat/config:/im-chat/config \
+              -v /data/logs/chat:/im-chat/_output/logs \
+              freechat-chat:latest
+            sleep 2
+            docker ps --filter name=freechat-chat
