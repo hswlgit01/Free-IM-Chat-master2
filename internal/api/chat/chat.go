@@ -204,17 +204,30 @@ func (o *Api) Login(c *gin.Context) {
 		apiresp.GinError(c, err)
 		return
 	}
-	
+
+	// chat-rpc returns the chat-side user_id in resp.UserID, but OpenIM only
+	// recognises im_server_user_id (carried in resp.ImServerIDs from organization_user).
+	// They diverge in the multi-org schema — every user has both. We must use the
+	// im_server_user_id when asking openim-api for a token, and the same id needs
+	// to be what the Flutter client receives so its later OpenIM SDK login
+	// (which keys on userID) lines up. Returning the chat-side id here would
+	// surface as `1004 RecordNotFoundError` from /auth/get_user_token (login
+	// hangs from the user's perspective).
+	imServerUserID := resp.UserID
+	if len(resp.ImServerIDs) > 0 && resp.ImServerIDs[0] != "" {
+		imServerUserID = resp.ImServerIDs[0]
+	}
+
 	// 获取用户的IM Token
-	imToken, err := o.imApiCaller.GetUserToken(apiCtx, resp.UserID, req.Platform)
+	imToken, err := o.imApiCaller.GetUserToken(apiCtx, imServerUserID, req.Platform)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
 	}
-	
+
 	apiresp.GinSuccess(c, &apistruct.LoginResp{
 		ImToken:   imToken,
-		UserID:    resp.UserID,
+		UserID:    imServerUserID,
 		ChatToken: resp.ChatToken,
 	})
 }
