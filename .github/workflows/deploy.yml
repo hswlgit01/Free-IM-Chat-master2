@@ -6,7 +6,7 @@ name: Build & Deploy Chat
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master, main, dev]
   workflow_dispatch:
 
 jobs:
