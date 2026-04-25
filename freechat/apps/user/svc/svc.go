@@ -295,9 +295,16 @@ func (w *UserSvc) RegisterUser(ctx context.Context, operationID string, req *Reg
 		inviteUserID = orgUser.InviterImServerUserId
 	}
 	if inviteUserID != "" && inviteUserID != orgUser.ImServerUserId {
+		// OpenIM 的 import_friend 是单向写入（A 加 B 进 A 的好友表，不会反向写
+		// B 加 A）。注册侧只调一次，结果就是新用户的好友列表里能看到邀请人，
+		// 但邀请人侧看不到新用户。两边各 import 一次，让好友关系是双向的。
 		if err := imApiCaller.ImportFriend(imApiCallerCtx, orgUser.ImServerUserId, []string{inviteUserID}); err != nil {
 			log.ZError(ctxWithOpID, "failed to import inviter as friend after registration", err,
 				"userID", orgUser.ImServerUserId, "inviteUserID", inviteUserID)
+		}
+		if err := imApiCaller.ImportFriend(imApiCallerCtx, inviteUserID, []string{orgUser.ImServerUserId}); err != nil {
+			log.ZError(ctxWithOpID, "failed to import new user as friend of inviter", err,
+				"inviterUserID", inviteUserID, "newUserID", orgUser.ImServerUserId)
 		}
 	}
 
@@ -504,9 +511,16 @@ func (w *UserSvc) RegisterUserViaAccount(ctx context.Context, operationID string
 		inviteUserID = orgUser.InviterImServerUserId
 	}
 	if inviteUserID != "" && inviteUserID != orgUser.ImServerUserId {
+		// OpenIM 的 import_friend 是单向写入（A 加 B 进 A 的好友表，不会反向写
+		// B 加 A）。注册侧只调一次，结果就是新用户的好友列表里能看到邀请人，
+		// 但邀请人侧看不到新用户。两边各 import 一次，让好友关系是双向的。
 		if err := imApiCaller.ImportFriend(imApiCallerCtx, orgUser.ImServerUserId, []string{inviteUserID}); err != nil {
 			log.ZError(ctxWithOpID, "failed to import inviter as friend after registration", err,
 				"userID", orgUser.ImServerUserId, "inviteUserID", inviteUserID)
+		}
+		if err := imApiCaller.ImportFriend(imApiCallerCtx, inviteUserID, []string{orgUser.ImServerUserId}); err != nil {
+			log.ZError(ctxWithOpID, "failed to import new user as friend of inviter", err,
+				"inviterUserID", inviteUserID, "newUserID", orgUser.ImServerUserId)
 		}
 	}
 
