@@ -144,9 +144,25 @@ func (w *DefaultFriendSvc) InternalAddDefaultFriend(operationID string, orgId pr
 
 	imUserIds, err := registerAddFriendDao.SelectByOrgIdAndImUserIds(context.TODO(), orgId, nil)
 	if err == nil {
-		err = imApiCaller.ImportFriend(imApiCallerCtx, imServerUserId, imUserIds)
-		if err != nil {
-			log.ZError(ctxWithOpID, "imApiCaller.ImportFriend error", err)
+		friendIDs := make([]string, 0, len(imUserIds))
+		for _, userID := range imUserIds {
+			if userID == "" || userID == imServerUserId {
+				continue
+			}
+			friendIDs = append(friendIDs, userID)
+		}
+		if len(friendIDs) == 0 {
+			return
+		}
+		if err = imApiCaller.ImportFriend(imApiCallerCtx, imServerUserId, friendIDs); err != nil {
+			log.ZError(ctxWithOpID, "imApiCaller.ImportFriend default friends error", err,
+				"userID", imServerUserId, "defaultFriendIDs", friendIDs)
+		}
+		for _, friendID := range friendIDs {
+			if err = imApiCaller.ImportFriend(imApiCallerCtx, friendID, []string{imServerUserId}); err != nil {
+				log.ZError(ctxWithOpID, "imApiCaller.ImportFriend new user to default friend error", err,
+					"defaultFriendID", friendID, "newUserID", imServerUserId)
+			}
 		}
 	} else {
 		log.ZError(ctxWithOpID, "registerAddFriendDao.SelectByOrgIdAndImUserIds error", err)
