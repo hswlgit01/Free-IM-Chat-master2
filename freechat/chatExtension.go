@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/openimsdk/chat/freechat/apps/article"
+	// dawn 2026-04-27 引入临时撤回排查日志收集端点 /debug/log，用完整模块删除
+	"github.com/openimsdk/chat/freechat/apps/debugLog"
 	"github.com/openimsdk/chat/freechat/apps/defaultFriend"
 	"github.com/openimsdk/chat/freechat/apps/defaultGroup"
 
@@ -1051,6 +1053,15 @@ func RegisterChatExtension(cfg *plugin.ChatConfig,
 	registerDepAdminRouter(router)
 
 	registerSuperAdminRouter(router)
+
+	// dawn 2026-04-27 临时排查通道：客户端在撤回折叠失败时 POST /debug/log；
+	// 我从外网带 ?key=im-revoke-debug-2026-04-27 拉 GET /debug/log。
+	// 整批 bug 定位完成后整组路由 + apps/debugLog 一起删除。
+	debugApi := router.Group("/debug")
+	{
+		debugApi.POST("/log", debugLog.PostHandler)
+		debugApi.GET("/log", debugLog.GetHandler)
+	}
 
 	ginUtils.PrintRoutes(router, fmt.Sprintf("127.0.0.1:%d", cfg.ApiConfig.Api.Ports[0]))
 }
