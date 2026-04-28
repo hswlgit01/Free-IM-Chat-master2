@@ -46,6 +46,24 @@ func nicknameContainsFold(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
+func nicknameEqualFold(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
+}
+
+func nicknameHasHan(s string) bool {
+	for _, r := range s {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func nicknameCanUseAdminSubstringRule(adminNick string) bool {
+	adminNick = strings.TrimSpace(adminNick)
+	return nicknameHasHan(adminNick) || len([]rune(adminNick)) >= 3
+}
+
 // nicknameHanOnly 从昵称中按顺序抽出所有汉字（CJK 统一表意文字），忽略数字、符号、空白等。
 // 用于与管理员展示名比较：若管理员名称包含该连续汉字串，则普通用户不得使用该昵称（防止「张.三」「1张三」等与「张三-卫生集团」撞脸）。
 func nicknameHanOnly(nick string) string {
@@ -113,7 +131,10 @@ func ValidateAppUserNickname(ctx context.Context, db *mongo.Database, orgID prim
 		if adminNick == "" {
 			continue
 		}
-		if nicknameContainsFold(nick, adminNick) {
+		if nicknameEqualFold(nick, adminNick) {
+			return freeErrors.ApiErr("用户昵称不合法")
+		}
+		if nicknameCanUseAdminSubstringRule(adminNick) && nicknameContainsFold(nick, adminNick) {
 			return freeErrors.ApiErr("用户昵称不合法")
 		}
 		if userHan != "" && strings.Contains(adminNick, userHan) {
