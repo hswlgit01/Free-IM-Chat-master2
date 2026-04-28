@@ -52,6 +52,42 @@ func NewUserSvc() *UserSvc {
 	return &UserSvc{}
 }
 
+const registrationFriendGreeting = "你们已经成为好友，打个招呼吧～"
+
+func sendRegistrationFriendWelcomeMessages(ctx context.Context, apiCtx context.Context, newUserID string, friendIDs []string) {
+	imApiCaller := plugin.ImApiCaller()
+	seen := make(map[string]struct{}, len(friendIDs))
+	for _, friendID := range friendIDs {
+		if friendID == "" || friendID == newUserID {
+			continue
+		}
+		if _, ok := seen[friendID]; ok {
+			continue
+		}
+		seen[friendID] = struct{}{}
+
+		_, err := imApiCaller.SendMsg(apiCtx, map[string]any{
+			"sendID":           newUserID,
+			"recvID":           friendID,
+			"senderPlatformID": int32(10),
+			"contentType":      constantpb.Text,
+			"sessionType":      constantpb.SingleChatType,
+			"content": map[string]any{
+				"content": registrationFriendGreeting,
+			},
+			"sendTime":       time.Now().UnixMilli(),
+			"notOfflinePush": true,
+		})
+		if err != nil {
+			log.ZError(ctx, "failed to send registration friend welcome message", err,
+				"newUserID", newUserID, "friendID", friendID)
+			continue
+		}
+		log.ZInfo(ctx, "sent registration friend welcome message",
+			"newUserID", newUserID, "friendID", friendID)
+	}
+}
+
 type RegUserReq struct {
 	chatpb.RegisterUserReq
 	OrgInvitationCode string `protobuf:"bytes,1,opt,name=orgInvitationCode,proto3" json:"orgInvitationCode"`
@@ -309,7 +345,9 @@ func (w *UserSvc) RegisterUser(ctx context.Context, operationID string, req *Reg
 	}
 
 	defFriendSvc := defaultFriendSvc.NewDefaultFriendSvc()
-	defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
+	defaultFriendIDs := defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
+	visibleFriendIDs := append([]string{inviteUserID}, defaultFriendIDs...)
+	sendRegistrationFriendWelcomeMessages(ctxWithOpID, imApiCallerCtx, orgUser.ImServerUserId, visibleFriendIDs)
 
 	defGroupSvc := defaultGroupSvc.NewDefaultGroupSvc()
 	defGroupSvc.InternalAddDefaultGroup(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
@@ -525,7 +563,9 @@ func (w *UserSvc) RegisterUserViaAccount(ctx context.Context, operationID string
 	}
 
 	defFriendSvc := defaultFriendSvc.NewDefaultFriendSvc()
-	defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
+	defaultFriendIDs := defFriendSvc.InternalAddDefaultFriend(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)
+	visibleFriendIDs := append([]string{inviteUserID}, defaultFriendIDs...)
+	sendRegistrationFriendWelcomeMessages(ctxWithOpID, imApiCallerCtx, orgUser.ImServerUserId, visibleFriendIDs)
 
 	defGroupSvc := defaultGroupSvc.NewDefaultGroupSvc()
 	defGroupSvc.InternalAddDefaultGroup(operationID, orgUser.OrganizationId, orgUser.ImServerUserId)

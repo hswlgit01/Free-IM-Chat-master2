@@ -132,13 +132,14 @@ func (w *DefaultFriendSvc) SuperCmsListDefaultFriend(ctx context.Context, orgId 
 	return resp, nil
 }
 
-func (w *DefaultFriendSvc) InternalAddDefaultFriend(operationID string, orgId primitive.ObjectID, imServerUserId string) {
+func (w *DefaultFriendSvc) InternalAddDefaultFriend(operationID string, orgId primitive.ObjectID, imServerUserId string) []string {
 	registerAddFriendDao := model.NewDefaultFriendDao(plugin.MongoCli().GetDB())
 	imApiCaller := plugin.ImApiCaller()
 	ctxWithOpID := context.WithValue(context.Background(), constantpb.OperationID, operationID)
 	imApiCallerToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(ctxWithOpID)
 	if err != nil {
 		log.ZError(ctxWithOpID, "imApiCaller.ImAdminTokenWithDefaultAdmin error", err)
+		return nil
 	}
 	imApiCallerCtx := mctx.WithApiToken(ctxWithOpID, imApiCallerToken)
 
@@ -152,7 +153,7 @@ func (w *DefaultFriendSvc) InternalAddDefaultFriend(operationID string, orgId pr
 			friendIDs = append(friendIDs, userID)
 		}
 		if len(friendIDs) == 0 {
-			return
+			return nil
 		}
 		if err = imApiCaller.ImportFriend(imApiCallerCtx, imServerUserId, friendIDs); err != nil {
 			log.ZError(ctxWithOpID, "imApiCaller.ImportFriend default friends error", err,
@@ -164,7 +165,9 @@ func (w *DefaultFriendSvc) InternalAddDefaultFriend(operationID string, orgId pr
 					"defaultFriendID", friendID, "newUserID", imServerUserId)
 			}
 		}
+		return friendIDs
 	} else {
 		log.ZError(ctxWithOpID, "registerAddFriendDao.SelectByOrgIdAndImUserIds error", err)
 	}
+	return nil
 }
