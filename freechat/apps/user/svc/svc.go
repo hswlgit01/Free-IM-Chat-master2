@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	defaultFriendSvc "github.com/openimsdk/chat/freechat/apps/defaultFriend/svc"
@@ -53,9 +54,56 @@ func NewUserSvc() *UserSvc {
 }
 
 const registrationFriendGreeting = "你们已经成为好友，打个招呼吧～"
+const registrationFriendSenderFallback = "好友"
+
+type registrationFriendSender struct {
+	nickname string
+	faceURL  string
+}
+
+func registrationFriendSendersByID(ctx context.Context, friendIDs []string) map[string]registrationFriendSender {
+	ids := make([]string, 0, len(friendIDs))
+	seen := make(map[string]struct{}, len(friendIDs))
+	for _, friendID := range friendIDs {
+		if friendID == "" {
+			continue
+		}
+		if _, ok := seen[friendID]; ok {
+			continue
+		}
+		seen[friendID] = struct{}{}
+		ids = append(ids, friendID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := openImModel.NewUserDao(plugin.MongoCli().GetDB()).FindByUserIDs(ctx, ids)
+	if err != nil {
+		log.ZWarn(ctx, "failed to load registration friend sender profiles", err, "friendIDs", ids)
+		return nil
+	}
+
+	senders := make(map[string]registrationFriendSender, len(users))
+	for _, user := range users {
+		if user == nil || user.UserID == "" {
+			continue
+		}
+		nickname := strings.TrimSpace(user.Nickname)
+		if nickname == "" || strings.EqualFold(nickname, "null") || strings.EqualFold(nickname, "nil") {
+			nickname = registrationFriendSenderFallback
+		}
+		senders[user.UserID] = registrationFriendSender{
+			nickname: nickname,
+			faceURL:  user.FaceURL,
+		}
+	}
+	return senders
+}
 
 func sendRegistrationFriendWelcomeMessages(ctx context.Context, apiCtx context.Context, newUserID string, friendIDs []string) {
 	imApiCaller := plugin.ImApiCaller()
+	senders := registrationFriendSendersByID(ctx, friendIDs)
 	seen := make(map[string]struct{}, len(friendIDs))
 	for _, friendID := range friendIDs {
 		if friendID == "" || friendID == newUserID {
@@ -66,9 +114,15 @@ func sendRegistrationFriendWelcomeMessages(ctx context.Context, apiCtx context.C
 		}
 		seen[friendID] = struct{}{}
 
+		sender := senders[friendID]
+		if sender.nickname == "" {
+			sender.nickname = registrationFriendSenderFallback
+		}
 		_, err := imApiCaller.SendMsg(apiCtx, map[string]any{
 			"sendID":           friendID,
 			"recvID":           newUserID,
+			"senderNickname":   sender.nickname,
+			"senderFaceURL":    sender.faceURL,
 			"senderPlatformID": int32(10),
 			"contentType":      constantpb.Text,
 			"sessionType":      constantpb.SingleChatType,
