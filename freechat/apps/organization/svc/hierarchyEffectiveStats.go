@@ -23,8 +23,10 @@ const imNicknameDeregistered = "已注销"
 // hierarchyEffectiveStats 层级管理展示用：team_size / direct_downline_count 排除封禁、组织禁用、已注销（IM 昵称），
 // 被封禁节点本身不计入上级人数，但其下级中非封禁成员仍计入（递归仍穿过被封禁节点）。
 type hierarchyEffectiveStats struct {
-	team   map[string]int
-	direct map[string]int
+	team       map[string]int
+	direct     map[string]int
+	excluded   map[string]bool
+	excludedIM map[string]struct{}
 }
 
 func (st *hierarchyEffectiveStats) applyUser(p *dto.UserHierarchyInfo) {
@@ -82,6 +84,33 @@ func (st *hierarchyEffectiveStats) totalTeamSizeFor(userID string) int {
 		return 0
 	}
 	return st.team[userID]
+}
+
+func (st *hierarchyEffectiveStats) directDownlineCountFor(userID string) int {
+	if st == nil {
+		return 0
+	}
+	return st.direct[userID]
+}
+
+func (st *hierarchyEffectiveStats) isExcludedUserID(userID string) bool {
+	if st == nil {
+		return false
+	}
+	return st.excluded[userID]
+}
+
+func (st *hierarchyEffectiveStats) excludedImServerUserIDs() []string {
+	if st == nil || len(st.excludedIM) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(st.excludedIM))
+	for id := range st.excludedIM {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // loadHierarchyEffectiveStats 按组织拉全量 organization_user 后在内存中重算有效团队人数。
@@ -165,6 +194,7 @@ func (s *HierarchyService) loadHierarchyEffectiveStats(ctx context.Context, orgI
 	}
 
 	excluded := make(map[string]bool, len(all))
+	excludedIM := make(map[string]struct{})
 	for _, ou := range all {
 		if ou.UserType == chat.OrganizationUserTypeOrganization {
 			continue
@@ -177,10 +207,12 @@ func (s *HierarchyService) loadHierarchyEffectiveStats(ctx context.Context, orgI
 		if im != "" {
 			if _, ok := forbiddenIm[im]; ok {
 				excluded[ou.UserId] = true
+				excludedIM[im] = struct{}{}
 				continue
 			}
 			if strings.TrimSpace(nickByIm[im]) == imNicknameDeregistered {
 				excluded[ou.UserId] = true
+				excludedIM[im] = struct{}{}
 			}
 		}
 	}
@@ -230,7 +262,7 @@ func (s *HierarchyService) loadHierarchyEffectiveStats(ctx context.Context, orgI
 		teamMap[uid] = teamFn(uid)
 	}
 
-	return &hierarchyEffectiveStats{team: teamMap, direct: directMap}, nil
+	return &hierarchyEffectiveStats{team: teamMap, direct: directMap, excluded: excluded, excludedIM: excludedIM}, nil
 }
 
 func (s *HierarchyService) tryHierarchyEffectiveStats(ctx context.Context, orgID primitive.ObjectID) *hierarchyEffectiveStats {

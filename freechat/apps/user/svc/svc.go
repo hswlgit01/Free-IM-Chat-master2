@@ -235,7 +235,7 @@ func (w *UserSvc) RegisterUser(ctx context.Context, operationID string, req *Reg
 		return nil, freeErrors.ApiErr("account must be set")
 	}
 
-	if err := checkRegisterClientIPNotFromBannedUser(ctx, plugin.MongoCli().GetDB(), req.Ip); err != nil {
+	if err := checkRegisterClientIPAllowed(ctx, plugin.MongoCli().GetDB(), req.Ip); err != nil {
 		return nil, err
 	}
 
@@ -499,7 +499,7 @@ func (w *UserSvc) RegisterUserViaAccount(ctx context.Context, operationID string
 		return nil, freeErrors.AccountExistsErr
 	}
 
-	if err := checkRegisterClientIPNotFromBannedUser(ctx, plugin.MongoCli().GetDB(), req.Ip); err != nil {
+	if err := checkRegisterClientIPAllowed(ctx, plugin.MongoCli().GetDB(), req.Ip); err != nil {
 		return nil, err
 	}
 

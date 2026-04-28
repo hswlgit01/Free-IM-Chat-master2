@@ -46,6 +46,66 @@ func (s *HierarchyService) attachForbiddenImNin(filter bson.M, forbidden map[str
 	filter["im_server_user_id"] = bson.M{"$nin": ids}
 }
 
+func mergeStringNin(filter bson.M, field string, ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(ids))
+	merged := make([]string, 0, len(ids))
+
+	add := func(v string) {
+		if v == "" {
+			return
+		}
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		merged = append(merged, v)
+	}
+
+	if cond, ok := filter[field].(bson.M); ok {
+		switch old := cond["$nin"].(type) {
+		case []string:
+			for _, v := range old {
+				add(v)
+			}
+		case []interface{}:
+			for _, v := range old {
+				if s, ok := v.(string); ok {
+					add(s)
+				}
+			}
+		case primitive.A:
+			for _, v := range old {
+				if s, ok := v.(string); ok {
+					add(s)
+				}
+			}
+		}
+		for _, v := range ids {
+			add(v)
+		}
+		cond["$nin"] = merged
+		filter[field] = cond
+		return
+	}
+
+	for _, v := range ids {
+		add(v)
+	}
+	filter[field] = bson.M{"$nin": merged}
+}
+
+func (s *HierarchyService) applyHierarchyVisibilityFilter(filter bson.M, st *hierarchyEffectiveStats, forbidden map[string]struct{}) {
+	filter["status"] = bson.M{"$ne": chat.OrganizationUserDisableStatus}
+	if st != nil {
+		mergeStringNin(filter, "im_server_user_id", st.excludedImServerUserIDs())
+		return
+	}
+	s.attachForbiddenImNin(filter, forbidden)
+}
+
 // GetHierarchyTree returns a tree structure of users based on their hierarchy relationships
 func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID primitive.ObjectID, rootUserID string, maxDepth int) (*dto.HierarchyTreeResp, error) {
 	var rootUser *chat.OrganizationUser
@@ -83,16 +143,18 @@ func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID 
 		UserType:            string(rootUser.UserType),
 	}
 
+	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
+
 	// If maxDepth is 0 or positive, build the tree recursively
 	if maxDepth != 0 {
 		forbiddenIm := s.mergeForbiddenImServerUserIDs(ctx)
-		err = s.buildTreeRecursively(ctx, organizationID, rootNode, maxDepth, 1, forbiddenIm)
+		err = s.buildTreeRecursively(ctx, organizationID, rootNode, maxDepth, 1, forbiddenIm, st)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if st := s.tryHierarchyEffectiveStats(ctx, organizationID); st != nil {
+	if st != nil {
 		st.applyTreeRecursive(rootNode)
 	}
 
@@ -111,12 +173,13 @@ func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, orga
 
 	account, nickname, faceURL := s.getUserInfo(ctx, rootUser)
 
+	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
 	collection := s.db.Collection("organization_user")
 	childFilter := bson.M{
 		"organization_id": organizationID,
 		"level":           1,
 	}
-	s.attachForbiddenImNin(childFilter, s.mergeForbiddenImServerUserIDs(ctx))
+	s.applyHierarchyVisibilityFilter(childFilter, st, s.mergeForbiddenImServerUserIDs(ctx))
 	childCount, err := collection.CountDocuments(ctx, childFilter)
 	if err != nil {
 		return nil, err
@@ -134,12 +197,17 @@ func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, orga
 		HasMoreChildren:     childCount > 0,
 		UserType:            string(rootUser.UserType),
 	}
+	if st != nil {
+		st.applyTreeNode(rootNode)
+		childCount = int64(st.directDownlineCountFor(rootUser.UserId))
+		rootNode.HasMoreChildren = childCount > 0
+	}
 
 	return &dto.HierarchyTreeResp{Root: rootNode}, nil
 }
 
 // buildTreeRecursively builds the hierarchy tree recursively
-func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizationID primitive.ObjectID, node *dto.HierarchyTreeNode, maxDepth, currentDepth int, forbiddenIm map[string]struct{}) error {
+func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizationID primitive.ObjectID, node *dto.HierarchyTreeNode, maxDepth, currentDepth int, forbiddenIm map[string]struct{}, st *hierarchyEffectiveStats) error {
 	// 检查是否是组织根节点（检查UserType字段和OrgRootNode前缀）
 	isOrgRootNode := node.UserType == string(chat.OrganizationUserTypeOrganization) ||
 		(len(node.UserID) >= len(OrgRootNodePrefix) && node.UserID[:len(OrgRootNodePrefix)] == OrgRootNodePrefix)
@@ -156,7 +224,7 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 		// 对于普通用户节点，查找所有level1_parent=node.UserID的用户
 		filter["level1_parent"] = node.UserID
 	}
-	s.attachForbiddenImNin(filter, forbiddenIm)
+	s.applyHierarchyVisibilityFilter(filter, st, forbiddenIm)
 
 	// 如果已经达到最大深度，只检查是否还有更多子节点
 	if maxDepth > 0 && currentDepth >= maxDepth {
@@ -191,6 +259,9 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 
 	// 处理每个子节点
 	for _, child := range children {
+		if st != nil && st.isExcludedUserID(child.UserId) {
+			continue
+		}
 		account, nickname, faceURL := s.getUserInfo(ctx, child)
 		childNode := &dto.HierarchyTreeNode{
 			UserID:              child.UserId,
@@ -206,7 +277,7 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 		}
 
 		// 递归构建子节点的子树
-		err = s.buildTreeRecursively(ctx, organizationID, childNode, maxDepth, currentDepth+1, forbiddenIm)
+		err = s.buildTreeRecursively(ctx, organizationID, childNode, maxDepth, currentDepth+1, forbiddenIm, st)
 		if err != nil {
 			return err
 		}
@@ -246,8 +317,9 @@ func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizatio
 		// 对于普通用户，查询直接下级
 		filter["level1_parent"] = parentUserID
 	}
+	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
 	forbiddenIm := s.mergeForbiddenImServerUserIDs(ctx)
-	s.attachForbiddenImNin(filter, forbiddenIm)
+	s.applyHierarchyVisibilityFilter(filter, st, forbiddenIm)
 
 	collection := s.db.Collection("organization_user")
 
@@ -425,8 +497,9 @@ func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizatio
 		})
 	}
 
-	if st := s.tryHierarchyEffectiveStats(ctx, organizationID); st != nil {
+	if st != nil {
 		st.applyUserSlice(result.Children)
+		result.Total = int64(st.directDownlineCountFor(parentUserID))
 	}
 
 	return result, nil
@@ -647,7 +720,8 @@ func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationI
 	} else {
 		filter["level1_parent"] = userID
 	}
-	s.attachForbiddenImNin(filter, s.mergeForbiddenImServerUserIDs(ctx))
+	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
+	s.applyHierarchyVisibilityFilter(filter, st, s.mergeForbiddenImServerUserIDs(ctx))
 
 	// 限制返回10个直接下级用户
 	collection := s.db.Collection("organization_user")
@@ -683,7 +757,7 @@ func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationI
 		})
 	}
 
-	if st := s.tryHierarchyEffectiveStats(ctx, organizationID); st != nil {
+	if st != nil {
 		st.applyUser(&result.User)
 		st.applyUserPtr(result.Level1Parent)
 		st.applyUserPtr(result.Level2Parent)

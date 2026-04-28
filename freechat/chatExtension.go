@@ -543,6 +543,14 @@ func registerDepAdminRouter(router *gin.Engine) {
 		blockRouter.POST("/search", chatMiddleware.CheckToken, depmw.CheckOrganization(), userCtl.SearchBlockUser) // Search blocked users
 	}
 
+	ipBlockRouter := depAdminRouter.Group("/ip_block")
+	{
+		userCtl := user.NewUserCtl()
+		ipBlockRouter.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), userCtl.CmsGetIPBlockList)       // Search IP blocks for registration/login
+		ipBlockRouter.POST("/create", chatMiddleware.CheckToken, depmw.CheckOrganization(), userCtl.CmsPostCreateIPBlock) // Add or update IP block
+		ipBlockRouter.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), userCtl.CmsPostDeleteIPBlock) // Delete IP blocks
+	}
+
 	// 身份认证管理相关路由
 	adminIdentityCtl := identity.NewAdminIdentityCtl()
 	{

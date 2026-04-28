@@ -62,17 +62,17 @@ func (o *IPForbidden) Search(ctx context.Context, keyword string, state int32, p
 	switch state {
 	case constant.LimitNil:
 	case constant.LimitEmpty:
-		filter = bson.M{"limit_register": 0, "limit_login": 0}
+		filter = bson.M{"limit_register": false, "limit_login": false}
 	case constant.LimitOnlyRegisterIP:
-		filter = bson.M{"limit_register": 1, "limit_login": 0}
+		filter = bson.M{"limit_register": true, "limit_login": false}
 	case constant.LimitOnlyLoginIP:
-		filter = bson.M{"limit_register": 0, "limit_login": 1}
+		filter = bson.M{"limit_register": false, "limit_login": true}
 	case constant.LimitRegisterIP:
-		filter = bson.M{"limit_register": 1}
+		filter = bson.M{"limit_register": true}
 	case constant.LimitLoginIP:
-		filter = bson.M{"limit_login": 1}
+		filter = bson.M{"limit_login": true}
 	case constant.LimitLoginRegisterIP:
-		filter = bson.M{"limit_register": 1, "limit_login": 1}
+		filter = bson.M{"limit_register": true, "limit_login": true}
 	}
 
 	if keyword != "" {

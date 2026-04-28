@@ -2,11 +2,13 @@ package svc
 
 import (
 	"context"
+	"net"
 	"strings"
 
 	chatModel "github.com/openimsdk/chat/freechat/third/chat/model"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
 	"github.com/openimsdk/tools/log"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -51,7 +53,51 @@ func syncForbiddenRegisterIPsOnBlock(ctx context.Context, db *mongo.Database, ma
 	return dao.ReplaceIPsForBannedUser(ctx, imServerUserID, ips)
 }
 
+func normalizeRegisterClientIP(clientIP string) string {
+	clientIP = strings.TrimSpace(clientIP)
+	if clientIP == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(clientIP); err == nil {
+		clientIP = host
+	}
+	parsed := net.ParseIP(clientIP)
+	if parsed == nil {
+		return clientIP
+	}
+	return parsed.String()
+}
+
+func checkRegisterClientIPNotGloballyForbidden(ctx context.Context, db *mongo.Database, clientIP string) error {
+	ip := normalizeRegisterClientIP(clientIP)
+	if ip == "" {
+		return nil
+	}
+	var row struct {
+		LimitRegister bool `bson:"limit_register"`
+	}
+	err := db.Collection("ip_forbidden").FindOne(ctx, bson.M{"ip": ip}).Decode(&row)
+	if err == mongo.ErrNoDocuments {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.LimitRegister {
+		return freeErrors.ApiErr("该IP地址已被封锁，无法注册")
+	}
+	return nil
+}
+
+func checkRegisterClientIPAllowed(ctx context.Context, db *mongo.Database, clientIP string) error {
+	if err := checkRegisterClientIPNotGloballyForbidden(ctx, db, clientIP); err != nil {
+		return err
+	}
+	return checkRegisterClientIPNotFromBannedUser(ctx, db, clientIP)
+}
+
 func checkRegisterClientIPNotFromBannedUser(ctx context.Context, db *mongo.Database, clientIP string) error {
+	clientIP = normalizeRegisterClientIP(clientIP)
 	if strings.TrimSpace(clientIP) == "" {
 		return nil
 	}

@@ -97,11 +97,11 @@ func (c *UserTeamCtl) GetUserTeamInfo(ctx *gin.Context) {
 			"userID", userID,
 			"organizationID", org.ID.Hex())
 
-		// 使用组织用户的邀请码，其他字段使用固定值
+		// 查询失败时不要返回固定假数据，避免 App 与后台人数不一致。
 		resp := &dto.TeamInfoResp{
 			UserID:              userID,
-			TeamSize:            10,
-			DirectDownlineCount: 3,
+			TeamSize:            0,
+			DirectDownlineCount: 0,
 			InvitationCode:      org.OrgUser.InvitationCode,
 		}
 		apiresp.GinSuccess(ctx, resp)

@@ -40,5 +40,10 @@ func (s *HierarchyService) GetUserForTeamInfo(ctx context.Context, organizationI
 		return nil, err
 	}
 
+	if st := s.tryHierarchyEffectiveStats(ctx, organizationID); st != nil {
+		user.TeamSize = st.totalTeamSizeFor(user.UserId)
+		user.DirectDownlineCount = st.directDownlineCountFor(user.UserId)
+	}
+
 	return &user, nil
 }
