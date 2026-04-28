@@ -67,8 +67,8 @@ func sendRegistrationFriendWelcomeMessages(ctx context.Context, apiCtx context.C
 		seen[friendID] = struct{}{}
 
 		_, err := imApiCaller.SendMsg(apiCtx, map[string]any{
-			"sendID":           newUserID,
-			"recvID":           friendID,
+			"sendID":           friendID,
+			"recvID":           newUserID,
 			"senderPlatformID": int32(10),
 			"contentType":      constantpb.Text,
 			"sessionType":      constantpb.SingleChatType,
