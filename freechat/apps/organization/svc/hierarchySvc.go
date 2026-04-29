@@ -614,6 +614,25 @@ func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationI
 		}
 	}
 
+	// 历史数据里部分 level=1 用户没有保存 level1_parent/ancestor_path。
+	// 这类用户在树上属于组织根节点的直属下级，详情页也应展示组织根节点作为上级路径。
+	if user.UserType != chat.OrganizationUserTypeOrganization && user.Level == 1 && len(ancestorInfoList) == 0 {
+		if orgRoot, rootErr := s.getOrCreateOrgRootNode(ctx, organizationID); rootErr == nil {
+			rootAccount, rootNickname, _ := s.getUserInfo(ctx, orgRoot)
+			ancestorInfoList = append(ancestorInfoList, dto.AncestorInfo{
+				UserID:   orgRoot.UserId,
+				Account:  rootAccount,
+				Nickname: rootNickname,
+				Level:    1,
+			})
+			if len(userHierarchyInfo.AncestorPath) == 0 {
+				userHierarchyInfo.AncestorPath = []string{orgRoot.UserId}
+			}
+		} else {
+			log.ZWarn(ctx, "Failed to get organization root for level 1 user ancestor display", rootErr, "user_id", user.UserId)
+		}
+	}
+
 	// 将祖先信息添加到用户信息中
 	userHierarchyInfo.AncestorInfoList = ancestorInfoList
 
