@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/openimsdk/chat/freechat/apps/appLog"
 	"github.com/openimsdk/chat/freechat/apps/article"
 	// dawn 2026-04-27 引入临时撤回排查日志收集端点 /debug/log，用完整模块删除
 	"github.com/openimsdk/chat/freechat/apps/debugLog"
@@ -263,6 +264,14 @@ func registerDepRouter(router *gin.Engine) {
 		userKeysApi := depRouter.Group("/user_keys")
 		userKeysApi.Use(chatMiddleware.CheckToken)
 		userKeysApi.POST("/setup", userKeysCtl.SetupUserKeys) // 设置用户密钥
+	}
+
+	// App 客户端日志上传
+	{
+		appLogCtl := appLog.NewAppLogCtl()
+		appLogApi := depRouter.Group("/app_log")
+		appLogApi.POST("/upload", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), appLogCtl.Upload)
 	}
 
 	// 身份认证相关路由
@@ -831,6 +840,12 @@ func registerDepAdminRouter(router *gin.Engine) {
 
 		operationLogCtl := operationLog.NewOperationLogCtl()
 		operationLogApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), operationLogCtl.CmsGetListOperationLog) // 获取后台操作日志
+	}
+
+	appLogApi := depAdminRouter.Group("/app_log")
+	{
+		appLogCtl := appLog.NewAppLogCtl()
+		appLogApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), appLogCtl.CmsList) // 获取 App 客户端日志
 	}
 
 	// 签到相关接口

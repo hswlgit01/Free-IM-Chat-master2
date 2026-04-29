@@ -58,6 +58,7 @@ const (
 	CollectionUser                       = "user"
 	CollectionGroupOperationLog          = "group_operation_log" // 群操作日志表
 	CollectionOperationLog               = "operation_log"       // 群操作日志表
+	CollectionAppLog                     = "app_log"             // App 客户端日志表
 
 	CollectionChangeOrgRecord = "user_change_org"
 
