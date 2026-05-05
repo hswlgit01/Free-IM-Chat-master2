@@ -37,6 +37,10 @@ type CallerInterface interface {
 	GetGroupMemberUserIDs(ctx context.Context, groupID string) ([]string, error)
 	SendMsg(ctx context.Context, msgData any) (*msg.SendMsgResp, error)
 	BatchSendMsg(ctx context.Context, msgData any) error
+	// dawn 2026-05-05 修复后台聊天记录管理：暴露消息查询、撤回、删除能力给 CMS 代理层。
+	SearchMsg(ctx context.Context, req any) (*any, error)
+	RevokeMsg(ctx context.Context, req any) (*any, error)
+	DeleteMsgs(ctx context.Context, req any) (*any, error)
 	CreateGroup(ctx context.Context, req group.CreateGroupReq) (*group.CreateGroupResp, error)
 	DismissGroup(ctx context.Context, req group.DismissGroupReq) (*group.DismissGroupResp, error)
 	MuteGroup(ctx context.Context, req group.MuteGroupReq) (*group.MuteGroupResp, error)
@@ -280,6 +284,30 @@ func (c *Caller) BatchSendMsg(ctx context.Context, msgData any) error {
 		return err
 	}
 	return err
+}
+
+func (c *Caller) SearchMsg(ctx context.Context, req any) (*any, error) {
+	resp, err := searchMsg.Call(ctx, c.imApi, &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
+}
+
+func (c *Caller) RevokeMsg(ctx context.Context, req any) (*any, error) {
+	resp, err := revokeMsg.Call(ctx, c.imApi, &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
+}
+
+func (c *Caller) DeleteMsgs(ctx context.Context, req any) (*any, error) {
+	resp, err := deleteMsgs.Call(ctx, c.imApi, &req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, err
 }
 
 func (c *Caller) CreateGroup(ctx context.Context, req group.CreateGroupReq) (*group.CreateGroupResp, error) {

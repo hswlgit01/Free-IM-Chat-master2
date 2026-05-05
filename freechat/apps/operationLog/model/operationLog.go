@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"time"
 )
 
@@ -57,6 +58,11 @@ const (
 
 	OpTypeRepairHierarchy   OperationLogType = "RepairHierarchy"   // 修复用户层级关系
 	OpTypeFixCheckinRecords OperationLogType = "FixCheckinRecords" // 修复签到记录
+
+	// dawn 2026-05-05 修复聊天记录审计：补充后台查看、撤回、删除的操作类型。
+	OpTypeViewChatMessage   OperationLogType = "ViewChatMessage"   // 后台查看聊天记录
+	OpTypeRevokeChatMessage OperationLogType = "RevokeChatMessage" // 后台撤回聊天消息
+	OpTypeDeleteChatMessage OperationLogType = "DeleteChatMessage" // 后台删除聊天消息
 )
 
 // OperationLog 群操作日志表
@@ -96,6 +102,53 @@ func CreateOperationLogIndex(db *mongo.Database) error {
 			Keys: bson.D{
 				{Key: "im_server_user_id", Value: 1},
 			},
+		},
+		// dawn 2026-05-05 修复聊天记录审计查询：为操作类型、目标用户、会话和消息 ID 增加索引。
+		{
+			Keys: bson.D{
+				{Key: "org_id", Value: 1},
+				{Key: "operation_type", Value: 1},
+				{Key: "operation_time", Value: -1},
+			},
+			Options: options.Index().SetName("idx_org_operation_type_time"),
+		},
+		{
+			Keys: bson.D{
+				{Key: "org_id", Value: 1},
+				{Key: "details.target_user_id", Value: 1},
+				{Key: "operation_time", Value: -1},
+			},
+			Options: options.Index().
+				SetName("idx_org_chat_target_user_time").
+				SetPartialFilterExpression(bson.M{"details.target_user_id": bson.M{"$exists": true}}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "org_id", Value: 1},
+				{Key: "details.conversation_id", Value: 1},
+				{Key: "operation_time", Value: -1},
+			},
+			Options: options.Index().
+				SetName("idx_org_chat_conversation_time").
+				SetPartialFilterExpression(bson.M{"details.conversation_id": bson.M{"$exists": true}}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "org_id", Value: 1},
+				{Key: "details.server_msg_id", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_org_chat_server_msg_id").
+				SetPartialFilterExpression(bson.M{"details.server_msg_id": bson.M{"$exists": true}}),
+		},
+		{
+			Keys: bson.D{
+				{Key: "org_id", Value: 1},
+				{Key: "details.client_msg_id", Value: 1},
+			},
+			Options: options.Index().
+				SetName("idx_org_chat_client_msg_id").
+				SetPartialFilterExpression(bson.M{"details.client_msg_id": bson.M{"$exists": true}}),
 		},
 	})
 	return err

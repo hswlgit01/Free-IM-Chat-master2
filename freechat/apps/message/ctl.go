@@ -1,0 +1,212 @@
+package message
+
+import (
+	"fmt"
+
+	"github.com/gin-gonic/gin"
+	opModel "github.com/openimsdk/chat/freechat/apps/operationLog/model"
+	opSvc "github.com/openimsdk/chat/freechat/apps/operationLog/svc"
+	"github.com/openimsdk/chat/freechat/middleware"
+	"github.com/openimsdk/chat/freechat/plugin"
+	"github.com/openimsdk/chat/freechat/utils/freeErrors"
+	"github.com/openimsdk/tools/apiresp"
+	"github.com/openimsdk/tools/log"
+)
+
+// dawn 2026-05-05 修复后台聊天记录管理：新增 CMS 查询、撤回、删除代理并写入操作审计。
+type MessageCtl struct{}
+
+func NewMessageCtl() *MessageCtl {
+	return &MessageCtl{}
+}
+
+func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
+	org, req, ok := bindRequest(c)
+	if !ok {
+		return
+	}
+
+	forwardReq := pick(req, "sendID", "recvID", "contentType", "sendTime", "sessionType", "pagination")
+	resp, err := plugin.ImApiCaller().SearchMsg(c.Request.Context(), forwardReq)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+
+	ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "success", nil, map[string]any{
+		"result_count": searchResultCount(resp),
+	}))
+	apiresp.GinSuccess(c, deref(resp))
+}
+
+func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
+	org, req, ok := bindRequest(c)
+	if !ok {
+		return
+	}
+
+	forwardReq := pick(req, "conversationID", "seq", "userID")
+	resp, err := plugin.ImApiCaller().RevokeMsg(c.Request.Context(), forwardReq)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+
+	ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "success", nil, nil))
+	apiresp.GinSuccess(c, deref(resp))
+}
+
+func (ctl *MessageCtl) CmsDelete(c *gin.Context) {
+	org, req, ok := bindRequest(c)
+	if !ok {
+		return
+	}
+
+	forwardReq := pick(req, "conversationID", "seqs", "userID", "deleteSyncOpt")
+	if _, ok := forwardReq["deleteSyncOpt"]; !ok {
+		forwardReq["deleteSyncOpt"] = map[string]any{
+			"IsSyncSelf":  true,
+			"IsSyncOther": false,
+		}
+	}
+
+	resp, err := plugin.ImApiCaller().DeleteMsgs(c.Request.Context(), forwardReq)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeDeleteChatMessage, withResult(messageDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+
+	ctl.writeOperationLog(c, org, opModel.OpTypeDeleteChatMessage, withResult(messageDetails(req), "success", nil, map[string]any{
+		"delete_scope": deleteScope(forwardReq),
+	}))
+	apiresp.GinSuccess(c, deref(resp))
+}
+
+func bindRequest(c *gin.Context) (*middleware.OrgInfo, map[string]any, bool) {
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return nil, nil, false
+	}
+
+	req := map[string]any{}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return nil, nil, false
+	}
+	return org, req, true
+}
+
+func (ctl *MessageCtl) writeOperationLog(c *gin.Context, org *middleware.OrgInfo, operationType opModel.OperationLogType, details map[string]any) {
+	if err := opSvc.NewOperationLogSvc().InternalCreateOperationLog(c, &opSvc.InternalCreateOperationLogReq{
+		Details:        details,
+		UserId:         org.OrgUser.UserId,
+		ImServerUserId: org.OrgUser.ImServerUserId,
+		OrgId:          org.ID,
+		OperationType:  operationType,
+	}); err != nil {
+		log.ZError(c, c.Request.URL.Path+" :CreateOperationLog", err)
+	}
+}
+
+func pick(req map[string]any, keys ...string) map[string]any {
+	dst := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value, ok := req[key]; ok {
+			dst[key] = value
+		}
+	}
+	return dst
+}
+
+func baseDetails(req map[string]any) map[string]any {
+	return map[string]any{
+		"request": req,
+	}
+}
+
+func messageDetails(req map[string]any) map[string]any {
+	details := baseDetails(req)
+	for _, key := range []string{"target_user_id", "conversation_id", "server_msg_id", "client_msg_id", "reason"} {
+		if value, ok := req[key]; ok {
+			details[key] = value
+		}
+	}
+	if value, ok := req["userID"]; ok {
+		details["target_user_id"] = value
+	}
+	if value, ok := req["conversationID"]; ok {
+		details["conversation_id"] = value
+	}
+	if value, ok := req["seq"]; ok {
+		details["seq"] = value
+	}
+	if value, ok := req["seqs"]; ok {
+		details["seqs"] = value
+	}
+	if value, ok := req["serverMsgID"]; ok {
+		details["server_msg_id"] = value
+	}
+	if value, ok := req["clientMsgID"]; ok {
+		details["client_msg_id"] = value
+	}
+	return details
+}
+
+func withResult(details map[string]any, result string, err error, extra map[string]any) map[string]any {
+	details["result"] = result
+	if err != nil {
+		details["error"] = err.Error()
+	}
+	for key, value := range extra {
+		details[key] = value
+	}
+	return details
+}
+
+func deref(resp *any) any {
+	if resp == nil {
+		return map[string]any{}
+	}
+	return *resp
+}
+
+func searchResultCount(resp *any) any {
+	value := deref(resp)
+	data, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	return data["chatLogsNum"]
+}
+
+func deleteScope(req map[string]any) string {
+	opt, _ := req["deleteSyncOpt"].(map[string]any)
+	isSyncSelf := boolValue(opt["IsSyncSelf"]) || boolValue(opt["isSyncSelf"])
+	isSyncOther := boolValue(opt["IsSyncOther"]) || boolValue(opt["isSyncOther"])
+
+	switch {
+	case isSyncOther:
+		return "conversation_all"
+	case isSyncSelf:
+		return "user_all_devices"
+	default:
+		return "user_server_only"
+	}
+}
+
+func boolValue(value any) bool {
+	switch v := value.(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true" || v == "1"
+	case fmt.Stringer:
+		return v.String() == "true" || v.String() == "1"
+	default:
+		return false
+	}
+}

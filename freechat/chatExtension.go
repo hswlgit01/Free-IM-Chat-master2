@@ -29,6 +29,7 @@ import (
 	"github.com/openimsdk/chat/freechat/apps/group"
 	"github.com/openimsdk/chat/freechat/apps/identity"
 	"github.com/openimsdk/chat/freechat/apps/livestream"
+	"github.com/openimsdk/chat/freechat/apps/message"
 	"github.com/openimsdk/chat/freechat/apps/networkRoute"
 	"github.com/openimsdk/chat/freechat/apps/organization"
 	organizationModel "github.com/openimsdk/chat/freechat/apps/organization/model"
@@ -840,6 +841,14 @@ func registerDepAdminRouter(router *gin.Engine) {
 
 		operationLogCtl := operationLog.NewOperationLogCtl()
 		operationLogApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), operationLogCtl.CmsGetListOperationLog) // 获取后台操作日志
+	}
+
+	messageApi := depAdminRouter.Group("/message") // dawn 2026-05-05 修复后台聊天记录管理：开放 CMS 消息查询和操作审计入口。
+	{
+		messageCtl := message.NewMessageCtl()
+		messageApi.POST("/search", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsSearch) // 查询聊天记录并记录审计
+		messageApi.POST("/revoke", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsRevoke) // 撤回聊天消息并记录审计
+		messageApi.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsDelete) // 删除聊天消息并记录审计
 	}
 
 	appLogApi := depAdminRouter.Group("/app_log")

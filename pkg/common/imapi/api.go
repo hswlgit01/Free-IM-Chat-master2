@@ -40,6 +40,10 @@ var (
 	getGroupMemberUserIDs = NewApiCaller[group.GetGroupMemberUserIDsReq, group.GetGroupMemberUserIDsResp]("/group/get_group_member_user_id")
 	sendMsg               = NewApiCaller[any, msg.SendMsgResp]("/msg/send_msg")
 	batchSendMsg          = NewApiCaller[any, any]("/msg/batch_send_msg")
+	// dawn 2026-05-05 修复后台聊天记录管理：补齐查询、撤回、删除消息的 OpenIM API 调用器。
+	searchMsg             = NewApiCaller[any, any]("/msg/search_msg")
+	revokeMsg             = NewApiCaller[any, any]("/msg/revoke_msg")
+	deleteMsgs            = NewApiCaller[any, any]("/msg/delete_msgs")
 	createGroup           = NewApiCaller[group.CreateGroupReq, group.CreateGroupResp]("/group/create_group")
 	dismissGroup          = NewApiCaller[group.DismissGroupReq, group.DismissGroupResp]("/group/dismiss_group")
 	muteGroup             = NewApiCaller[group.MuteGroupReq, group.MuteGroupResp]("/group/mute_group")
