@@ -71,3 +71,47 @@ func TestFilterSearchResultByNickname(t *testing.T) {
 		t.Fatalf("chatLogsNum = %v, want 1", got["chatLogsNum"])
 	}
 }
+
+// dawn 2026-05-06 修复消息管理排序：覆盖发送者升序、同发送者时间倒序。
+func TestSortSearchResult(t *testing.T) {
+	resp := map[string]any{
+		"chatLogs": []any{
+			map[string]any{"chatLog": map[string]any{"senderNickname": "zz", "sendID": "2", "createTime": int64(1)}},
+			map[string]any{"chatLog": map[string]any{"senderNickname": "aa", "sendID": "1", "createTime": int64(2)}},
+			map[string]any{"chatLog": map[string]any{"senderNickname": "zz", "sendID": "2", "createTime": int64(3)}},
+		},
+	}
+
+	got := sortSearchResult(resp).(map[string]any)
+	logs := got["chatLogs"].([]any)
+	first := logs[0].(map[string]any)["chatLog"].(map[string]any)
+	second := logs[1].(map[string]any)["chatLog"].(map[string]any)
+	third := logs[2].(map[string]any)["chatLog"].(map[string]any)
+
+	if first["senderNickname"] != "aa" {
+		t.Fatalf("first sender = %v, want aa", first["senderNickname"])
+	}
+	if second["createTime"] != int64(3) || third["createTime"] != int64(1) {
+		t.Fatalf("zz rows not sorted by time desc: second=%v third=%v", second["createTime"], third["createTime"])
+	}
+}
+
+// dawn 2026-05-06 修复后台删除消息无感知：覆盖按消息 ID 判断删除状态。
+func TestIsDeletedSearchItem(t *testing.T) {
+	item := map[string]any{
+		"chatLog": map[string]any{
+			"serverMsgID": "server-1",
+			"clientMsgID": "client-1",
+		},
+	}
+
+	if !isDeletedSearchItem(item, map[string]struct{}{"server:server-1": {}}) {
+		t.Fatal("serverMsgID should mark item deleted")
+	}
+	if !isDeletedSearchItem(item, map[string]struct{}{"client:client-1": {}}) {
+		t.Fatal("clientMsgID should mark item deleted")
+	}
+	if isDeletedSearchItem(item, map[string]struct{}{"server:server-2": {}}) {
+		t.Fatal("unmatched message ID should not mark item deleted")
+	}
+}

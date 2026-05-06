@@ -2,7 +2,9 @@ package message
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -55,6 +57,8 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 	}
 
 	result := filterSearchResult(deref(resp), senderNickname, recvNickname, pageNumber, showNumber)
+	result = sortSearchResult(result)
+	result = ctl.filterDeletedSearchResult(c, org, result)
 	ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "success", nil, map[string]any{
 		"result_count": searchResultCount(result),
 	}))
@@ -271,6 +275,185 @@ func filterSearchResult(resp any, senderNickname, recvNickname string, pageNumbe
 	data["chatLogs"] = filtered[start:end]
 	data["chatLogsNum"] = total
 	return data
+}
+
+// dawn 2026-05-06 修复消息管理排序：后台列表按发送者稳定排序，同一发送者按发送时间倒序。
+func sortSearchResult(resp any) any {
+	data, logs, ok := searchData(resp)
+	if !ok {
+		return resp
+	}
+	sort.SliceStable(logs, func(i, j int) bool {
+		left := searchChatLog(logs[i])
+		right := searchChatLog(logs[j])
+		leftSender := sortSender(left)
+		rightSender := sortSender(right)
+		if leftSender != rightSender {
+			return leftSender < rightSender
+		}
+		return searchChatTime(left) > searchChatTime(right)
+	})
+	data["chatLogs"] = logs
+	return data
+}
+
+func sortSender(chatLog map[string]any) string {
+	sender := strings.ToLower(stringValue(chatLog["senderNickname"]))
+	if sender != "" {
+		return sender
+	}
+	return strings.ToLower(stringValue(chatLog["sendID"]))
+}
+
+func searchChatTime(chatLog map[string]any) int64 {
+	if value, ok := intValue(chatLog["createTime"]); ok {
+		return value
+	}
+	if value, ok := intValue(chatLog["sendTime"]); ok {
+		return value
+	}
+	return 0
+}
+
+// dawn 2026-05-06 修复后台删除消息无感知：OpenIM 用户侧删除不会影响全局搜索，这里按审计日志隐藏已删除消息。
+func (ctl *MessageCtl) filterDeletedSearchResult(c *gin.Context, org *middleware.OrgInfo, resp any) any {
+	data, logs, ok := searchData(resp)
+	if !ok || len(logs) == 0 {
+		return resp
+	}
+
+	serverMsgIDs, clientMsgIDs := collectSearchMessageIDs(logs)
+	if len(serverMsgIDs) == 0 && len(clientMsgIDs) == 0 {
+		return resp
+	}
+
+	opLogDao := opModel.NewOperationLogDao(plugin.MongoCli().GetDB())
+	deletedLogs, err := opLogDao.SelectSuccessfulChatDeletes(c, org.ID, serverMsgIDs, clientMsgIDs)
+	if err != nil {
+		log.ZWarn(c, "filter deleted chat messages failed", err)
+		return resp
+	}
+
+	deletedKeys := deletedMessageKeys(deletedLogs)
+	if len(deletedKeys) == 0 {
+		return resp
+	}
+
+	filtered := make([]any, 0, len(logs))
+	for _, item := range logs {
+		if !isDeletedSearchItem(item, deletedKeys) {
+			filtered = append(filtered, item)
+		}
+	}
+	if len(filtered) == len(logs) {
+		return resp
+	}
+
+	data["chatLogs"] = filtered
+	decrementChatLogsNum(data, len(logs)-len(filtered))
+	return data
+}
+
+func collectSearchMessageIDs(logs []any) ([]string, []string) {
+	serverSet := map[string]struct{}{}
+	clientSet := map[string]struct{}{}
+	for _, item := range logs {
+		chatLog := searchChatLog(item)
+		if value := stringValue(chatLog["serverMsgID"]); value != "" {
+			serverSet[value] = struct{}{}
+		}
+		if value := stringValue(chatLog["clientMsgID"]); value != "" {
+			clientSet[value] = struct{}{}
+		}
+	}
+	return mapKeys(serverSet), mapKeys(clientSet)
+}
+
+func deletedMessageKeys(records []*opModel.OperationLog) map[string]struct{} {
+	keys := make(map[string]struct{}, len(records)*2)
+	for _, record := range records {
+		details := operationDetails(record)
+		if value := stringValue(details["server_msg_id"]); value != "" {
+			keys["server:"+value] = struct{}{}
+		}
+		if value := stringValue(details["client_msg_id"]); value != "" {
+			keys["client:"+value] = struct{}{}
+		}
+	}
+	return keys
+}
+
+func operationDetails(record *opModel.OperationLog) map[string]any {
+	if record == nil || record.DetailsRaw == "" {
+		return map[string]any{}
+	}
+	details := map[string]any{}
+	if err := json.Unmarshal([]byte(record.DetailsRaw), &details); err != nil {
+		return map[string]any{}
+	}
+	return details
+}
+
+func isDeletedSearchItem(item any, deletedKeys map[string]struct{}) bool {
+	chatLog := searchChatLog(item)
+	if value := stringValue(chatLog["serverMsgID"]); value != "" {
+		if _, ok := deletedKeys["server:"+value]; ok {
+			return true
+		}
+	}
+	if value := stringValue(chatLog["clientMsgID"]); value != "" {
+		if _, ok := deletedKeys["client:"+value]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func decrementChatLogsNum(data map[string]any, deletedCount int) {
+	if deletedCount <= 0 {
+		return
+	}
+	total, ok := intValue(data["chatLogsNum"])
+	if !ok {
+		return
+	}
+	total -= int64(deletedCount)
+	if total < 0 {
+		total = 0
+	}
+	data["chatLogsNum"] = total
+}
+
+func searchData(resp any) (map[string]any, []any, bool) {
+	data, ok := resp.(map[string]any)
+	if !ok {
+		return nil, nil, false
+	}
+	logs, ok := data["chatLogs"].([]any)
+	if !ok {
+		return nil, nil, false
+	}
+	return data, logs, true
+}
+
+func searchChatLog(item any) map[string]any {
+	row, ok := item.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	chatLog, ok := row["chatLog"].(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return chatLog
+}
+
+func mapKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 func matchSearchChatLog(item any, senderNickname, recvNickname string) bool {

@@ -172,6 +172,32 @@ func (o *OperationLogDao) Create(ctx context.Context, obj *OperationLog) error {
 	return mongoutil.InsertMany(ctx, o.Collection, []*OperationLog{obj})
 }
 
+// dawn 2026-05-06 修复后台删除消息无感知：查询成功删除过的聊天消息审计记录，供消息列表过滤。
+func (o *OperationLogDao) SelectSuccessfulChatDeletes(ctx context.Context, orgId primitive.ObjectID, serverMsgIDs, clientMsgIDs []string) ([]*OperationLog, error) {
+	if orgId.IsZero() || (len(serverMsgIDs) == 0 && len(clientMsgIDs) == 0) {
+		return nil, nil
+	}
+
+	orFilters := make([]bson.M, 0, 2)
+	if len(serverMsgIDs) > 0 {
+		orFilters = append(orFilters, bson.M{"details.server_msg_id": bson.M{"$in": serverMsgIDs}})
+	}
+	if len(clientMsgIDs) > 0 {
+		orFilters = append(orFilters, bson.M{"details.client_msg_id": bson.M{"$in": clientMsgIDs}})
+	}
+
+	filter := bson.M{
+		"org_id":         orgId,
+		"operation_type": OpTypeDeleteChatMessage,
+		"details.result": "success",
+		"$or":            orFilters,
+	}
+	opts := options.Find().
+		SetSort(bson.M{"operation_time": -1}).
+		SetLimit(1000)
+	return mongoutil.Find[*OperationLog](ctx, o.Collection, filter, opts)
+}
+
 type OperationLogJoinAll struct {
 	*OperationLog `bson:",inline"`
 
