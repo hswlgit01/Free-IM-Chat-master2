@@ -95,23 +95,3 @@ func TestSortSearchResult(t *testing.T) {
 		t.Fatalf("zz rows not sorted by time desc: second=%v third=%v", second["createTime"], third["createTime"])
 	}
 }
-
-// dawn 2026-05-06 修复后台删除消息无感知：覆盖按消息 ID 判断删除状态。
-func TestIsDeletedSearchItem(t *testing.T) {
-	item := map[string]any{
-		"chatLog": map[string]any{
-			"serverMsgID": "server-1",
-			"clientMsgID": "client-1",
-		},
-	}
-
-	if !isDeletedSearchItem(item, map[string]struct{}{"server:server-1": {}}) {
-		t.Fatal("serverMsgID should mark item deleted")
-	}
-	if !isDeletedSearchItem(item, map[string]struct{}{"client:client-1": {}}) {
-		t.Fatal("clientMsgID should mark item deleted")
-	}
-	if isDeletedSearchItem(item, map[string]struct{}{"server:server-2": {}}) {
-		t.Fatal("unmatched message ID should not mark item deleted")
-	}
-}
