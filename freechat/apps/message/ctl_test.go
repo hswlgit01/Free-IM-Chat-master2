@@ -41,3 +41,33 @@ func TestNormalizeSearchRequest(t *testing.T) {
 		t.Fatalf("pagination = %v, want pageNumber=2 showNumber=20", pagination)
 	}
 }
+
+// dawn 2026-05-06 修复聊天记录名称查询：覆盖发送者和接收者昵称过滤。
+func TestFilterSearchResultByNickname(t *testing.T) {
+	resp := map[string]any{
+		"chatLogs": []any{
+			map[string]any{
+				"chatLog": map[string]any{
+					"senderNickname": "zz",
+					"recvNickname":   "aa",
+				},
+			},
+			map[string]any{
+				"chatLog": map[string]any{
+					"senderNickname": "bb",
+					"recvNickname":   "cc",
+				},
+			},
+		},
+		"chatLogsNum": 2,
+	}
+
+	got := filterSearchResult(resp, "z", "a", 1, 10).(map[string]any)
+	logs := got["chatLogs"].([]any)
+	if len(logs) != 1 {
+		t.Fatalf("filtered log count = %d, want 1", len(logs))
+	}
+	if got["chatLogsNum"] != 1 {
+		t.Fatalf("chatLogsNum = %v, want 1", got["chatLogsNum"])
+	}
+}

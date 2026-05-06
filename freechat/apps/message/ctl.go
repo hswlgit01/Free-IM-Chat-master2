@@ -32,6 +32,15 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 	}
 
 	forwardReq := normalizeSearchRequest(req)
+	pageNumber, showNumber := searchPage(forwardReq)
+	senderNickname := stringValue(req["senderNickname"])
+	recvNickname := stringValue(req["recvNickname"])
+	if senderNickname != "" || recvNickname != "" {
+		forwardReq["pagination"] = map[string]any{
+			"pageNumber": int64(1),
+			"showNumber": expandedSearchLimit(pageNumber, showNumber),
+		}
+	}
 	apiCtx, err := imAdminContext(c)
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
@@ -45,10 +54,11 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 		return
 	}
 
+	result := filterSearchResult(deref(resp), senderNickname, recvNickname, pageNumber, showNumber)
 	ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "success", nil, map[string]any{
-		"result_count": searchResultCount(resp),
+		"result_count": searchResultCount(result),
 	}))
-	apiresp.GinSuccess(c, deref(resp))
+	apiresp.GinSuccess(c, result)
 }
 
 func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
@@ -203,6 +213,84 @@ func normalizePagination(value any) map[string]any {
 	}
 }
 
+func searchPage(req map[string]any) (int64, int64) {
+	pagination, _ := req["pagination"].(map[string]any)
+	pageNumber, _ := pagination["pageNumber"].(int64)
+	showNumber, _ := pagination["showNumber"].(int64)
+	if pageNumber < 1 {
+		pageNumber = 1
+	}
+	if showNumber < 1 {
+		showNumber = 10
+	}
+	return pageNumber, showNumber
+}
+
+func expandedSearchLimit(pageNumber, showNumber int64) int64 {
+	limit := pageNumber * showNumber
+	if limit < showNumber {
+		limit = showNumber
+	}
+	if limit < 100 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	return limit
+}
+
+// dawn 2026-05-06 修复聊天记录名称查询：OpenIM 仅支持 ID 查询，CMS 代理层补充昵称过滤。
+func filterSearchResult(resp any, senderNickname, recvNickname string, pageNumber, showNumber int64) any {
+	if senderNickname == "" && recvNickname == "" {
+		return resp
+	}
+	data, ok := resp.(map[string]any)
+	if !ok {
+		return resp
+	}
+	logs, ok := data["chatLogs"].([]any)
+	if !ok {
+		return resp
+	}
+	filtered := make([]any, 0, len(logs))
+	for _, item := range logs {
+		if matchSearchChatLog(item, senderNickname, recvNickname) {
+			filtered = append(filtered, item)
+		}
+	}
+	total := len(filtered)
+	start := int((pageNumber - 1) * showNumber)
+	if start > total {
+		start = total
+	}
+	end := start + int(showNumber)
+	if end > total {
+		end = total
+	}
+	data["chatLogs"] = filtered[start:end]
+	data["chatLogsNum"] = total
+	return data
+}
+
+func matchSearchChatLog(item any, senderNickname, recvNickname string) bool {
+	row, ok := item.(map[string]any)
+	if !ok {
+		return false
+	}
+	chatLog, ok := row["chatLog"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if senderNickname != "" && !containsFold(stringValue(chatLog["senderNickname"]), senderNickname) {
+		return false
+	}
+	if recvNickname != "" && !containsFold(stringValue(chatLog["recvNickname"]), recvNickname) {
+		return false
+	}
+	return true
+}
+
 func baseDetails(req map[string]any) map[string]any {
 	return map[string]any{
 		"request": req,
@@ -255,8 +343,7 @@ func deref(resp *any) any {
 	return *resp
 }
 
-func searchResultCount(resp *any) any {
-	value := deref(resp)
+func searchResultCount(value any) any {
 	data, ok := value.(map[string]any)
 	if !ok {
 		return nil
@@ -330,4 +417,8 @@ func dateOnly(value any) string {
 		return date[:len("2006-01-02")]
 	}
 	return date
+}
+
+func containsFold(value, keyword string) bool {
+	return strings.Contains(strings.ToLower(value), strings.ToLower(keyword))
 }
