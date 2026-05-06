@@ -2,6 +2,8 @@ package message
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	opModel "github.com/openimsdk/chat/freechat/apps/operationLog/model"
@@ -26,7 +28,7 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 		return
 	}
 
-	forwardReq := pick(req, "sendID", "recvID", "contentType", "sendTime", "sessionType", "pagination")
+	forwardReq := normalizeSearchRequest(req)
 	resp, err := plugin.ImApiCaller().SearchMsg(c.Request.Context(), forwardReq)
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
@@ -122,6 +124,50 @@ func pick(req map[string]any, keys ...string) map[string]any {
 	return dst
 }
 
+// dawn 2026-05-06 修复消息查询 ArgsError：转发 OpenIM 前归一化表单数字和日期字段。
+func normalizeSearchRequest(req map[string]any) map[string]any {
+	dst := map[string]any{}
+	if value := stringValue(req["sendID"]); value != "" {
+		dst["sendID"] = value
+	}
+	if value := stringValue(req["recvID"]); value != "" {
+		dst["recvID"] = value
+	}
+	if value, ok := intValue(req["contentType"]); ok {
+		dst["contentType"] = value
+	}
+	if value, ok := intValue(req["sessionType"]); ok {
+		dst["sessionType"] = value
+	}
+	if value := dateOnly(req["sendTime"]); value != "" {
+		dst["sendTime"] = value
+	}
+	dst["pagination"] = normalizePagination(req["pagination"])
+	return dst
+}
+
+func normalizePagination(value any) map[string]any {
+	pageNumber, showNumber := int64(1), int64(10)
+	if pagination, ok := value.(map[string]any); ok {
+		if value, ok := intValue(pagination["pageNumber"]); ok {
+			pageNumber = value
+		}
+		if value, ok := intValue(pagination["showNumber"]); ok {
+			showNumber = value
+		}
+	}
+	if pageNumber < 1 {
+		pageNumber = 1
+	}
+	if showNumber < 1 {
+		showNumber = 10
+	}
+	return map[string]any{
+		"pageNumber": pageNumber,
+		"showNumber": showNumber,
+	}
+}
+
 func baseDetails(req map[string]any) map[string]any {
 	return map[string]any{
 		"request": req,
@@ -209,4 +255,44 @@ func boolValue(value any) bool {
 	default:
 		return false
 	}
+}
+
+func intValue(value any) (int64, bool) {
+	switch v := value.(type) {
+	case int:
+		return int64(v), true
+	case int32:
+		return int64(v), true
+	case int64:
+		return v, true
+	case float64:
+		return int64(v), true
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return 0, false
+		}
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		return n, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func stringValue(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return ""
+	}
+}
+
+func dateOnly(value any) string {
+	date := stringValue(value)
+	if len(date) >= len("2006-01-02") {
+		return date[:len("2006-01-02")]
+	}
+	return date
 }
