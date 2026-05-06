@@ -1,6 +1,7 @@
 package message
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/openimsdk/chat/freechat/middleware"
 	"github.com/openimsdk/chat/freechat/plugin"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
+	"github.com/openimsdk/chat/pkg/common/mctx"
+	constantpb "github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/tools/apiresp"
 	"github.com/openimsdk/tools/log"
 )
@@ -29,7 +32,13 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 	}
 
 	forwardReq := normalizeSearchRequest(req)
-	resp, err := plugin.ImApiCaller().SearchMsg(c.Request.Context(), forwardReq)
+	apiCtx, err := imAdminContext(c)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+	resp, err := plugin.ImApiCaller().SearchMsg(apiCtx, forwardReq)
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
 		apiresp.GinError(c, err)
@@ -49,7 +58,13 @@ func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
 	}
 
 	forwardReq := pick(req, "conversationID", "seq", "userID")
-	resp, err := plugin.ImApiCaller().RevokeMsg(c.Request.Context(), forwardReq)
+	apiCtx, err := imAdminContext(c)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+	resp, err := plugin.ImApiCaller().RevokeMsg(apiCtx, forwardReq)
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "failed", err, nil))
 		apiresp.GinError(c, err)
@@ -74,7 +89,13 @@ func (ctl *MessageCtl) CmsDelete(c *gin.Context) {
 		}
 	}
 
-	resp, err := plugin.ImApiCaller().DeleteMsgs(c.Request.Context(), forwardReq)
+	apiCtx, err := imAdminContext(c)
+	if err != nil {
+		ctl.writeOperationLog(c, org, opModel.OpTypeDeleteChatMessage, withResult(messageDetails(req), "failed", err, nil))
+		apiresp.GinError(c, err)
+		return
+	}
+	resp, err := plugin.ImApiCaller().DeleteMsgs(apiCtx, forwardReq)
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeDeleteChatMessage, withResult(messageDetails(req), "failed", err, nil))
 		apiresp.GinError(c, err)
@@ -112,6 +133,20 @@ func (ctl *MessageCtl) writeOperationLog(c *gin.Context, org *middleware.OrgInfo
 	}); err != nil {
 		log.ZError(c, c.Request.URL.Path+" :CreateOperationLog", err)
 	}
+}
+
+// dawn 2026-05-06 修复消息管理 ArgsError：后台代理 OpenIM 消息接口前使用默认 IM 管理员 token。
+func imAdminContext(c *gin.Context) (context.Context, error) {
+	operationID, err := middleware.GetOperationId(c)
+	if err != nil {
+		return nil, err
+	}
+	ctxWithOpID := context.WithValue(c.Request.Context(), constantpb.OperationID, operationID)
+	adminToken, err := plugin.ImApiCaller().ImAdminTokenWithDefaultAdmin(ctxWithOpID)
+	if err != nil {
+		return nil, err
+	}
+	return mctx.WithApiToken(ctxWithOpID, adminToken), nil
 }
 
 func pick(req map[string]any, keys ...string) map[string]any {
