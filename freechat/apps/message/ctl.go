@@ -3,6 +3,7 @@ package message
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	constantpb "github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/tools/apiresp"
 	"github.com/openimsdk/tools/log"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // dawn 2026-05-05 修复后台聊天记录管理：新增 CMS 查询、撤回、删除代理并写入操作审计。
@@ -36,6 +39,35 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 	pageNumber, showNumber := searchPage(forwardReq)
 	senderNickname := stringValue(req["senderNickname"])
 	recvNickname := stringValue(req["recvNickname"])
+	senderFilter, recvFilter := senderNickname, recvNickname
+	if stringValue(forwardReq["sendID"]) == "" && senderNickname != "" {
+		ids, err := resolveSearchUserIDs(c, org, senderNickname)
+		if err != nil {
+			ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
+			apiresp.GinError(c, err)
+			return
+		}
+		if len(ids) == 0 {
+			apiresp.GinSuccess(c, emptySearchResult())
+			return
+		}
+		forwardReq["sendID"] = ids[0]
+		senderFilter = ""
+	}
+	if stringValue(forwardReq["recvID"]) == "" && recvNickname != "" {
+		ids, err := resolveSearchUserIDs(c, org, recvNickname)
+		if err != nil {
+			ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "failed", err, nil))
+			apiresp.GinError(c, err)
+			return
+		}
+		if len(ids) == 0 {
+			apiresp.GinSuccess(c, emptySearchResult())
+			return
+		}
+		forwardReq["recvID"] = ids[0]
+		recvFilter = ""
+	}
 	if senderNickname != "" || recvNickname != "" {
 		forwardReq["pagination"] = map[string]any{
 			"pageNumber": int64(1),
@@ -55,7 +87,7 @@ func (ctl *MessageCtl) CmsSearch(c *gin.Context) {
 		return
 	}
 
-	result := filterSearchResult(deref(resp), senderNickname, recvNickname, pageNumber, showNumber)
+	result := filterSearchResult(deref(resp), senderFilter, recvFilter, pageNumber, showNumber)
 	result = sortSearchResult(result)
 	ctl.writeOperationLog(c, org, opModel.OpTypeViewChatMessage, withResult(baseDetails(req), "success", nil, map[string]any{
 		"result_count": searchResultCount(result),
@@ -240,6 +272,121 @@ func expandedSearchLimit(pageNumber, showNumber int64) int64 {
 		limit = 500
 	}
 	return limit
+}
+
+func emptySearchResult() map[string]any {
+	return map[string]any{
+		"chatLogs":    []any{},
+		"chatLogsNum": 0,
+	}
+}
+
+// dawn 2026-05-08 修复后台按昵称查不到消息：OpenIM 搜索只支持用户 ID，代理层先把昵称/账号解析成 IM 用户 ID。
+func resolveSearchUserIDs(ctx context.Context, org *middleware.OrgInfo, keyword string) ([]string, error) {
+	keyword = strings.TrimSpace(keyword)
+	if keyword == "" {
+		return nil, nil
+	}
+
+	db := plugin.MongoCli().GetDB()
+	ids := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	addID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+
+	regex := bson.M{"$regex": regexp.QuoteMeta(keyword), "$options": "i"}
+	type orgUserRow struct {
+		UserID         string `bson:"user_id"`
+		ImServerUserID string `bson:"im_server_user_id"`
+	}
+	orgFilter := bson.M{
+		"$or": bson.A{
+			bson.M{"nickname": regex},
+			bson.M{"account": regex},
+			bson.M{"im_server_user_id": keyword},
+			bson.M{"user_id": keyword},
+		},
+	}
+	if org != nil && !org.ID.IsZero() {
+		orgFilter["organization_id"] = org.ID
+	}
+	var orgRows []orgUserRow
+	if cursor, err := db.Collection("organization_user").Find(ctx, orgFilter, options.Find().SetLimit(20)); err != nil {
+		return nil, err
+	} else if err := cursor.All(ctx, &orgRows); err != nil {
+		return nil, err
+	}
+	for _, row := range orgRows {
+		addID(row.ImServerUserID)
+	}
+
+	type userRow struct {
+		UserID string `bson:"user_id"`
+	}
+	var userRows []userRow
+	if cursor, err := db.Collection("user").Find(ctx, bson.M{
+		"$or": bson.A{
+			bson.M{"nickname": regex},
+			bson.M{"user_id": keyword},
+		},
+	}, options.Find().SetLimit(20)); err != nil {
+		return nil, err
+	} else if err := cursor.All(ctx, &userRows); err != nil {
+		return nil, err
+	}
+	for _, row := range userRows {
+		addID(row.UserID)
+	}
+
+	type attrRow struct {
+		UserID string `bson:"user_id"`
+	}
+	var attrRows []attrRow
+	if cursor, err := db.Collection("attribute").Find(ctx, bson.M{
+		"$or": bson.A{
+			bson.M{"nickname": regex},
+			bson.M{"account": regex},
+			bson.M{"email": regex},
+			bson.M{"phone_number": regex},
+			bson.M{"user_id": keyword},
+		},
+	}, options.Find().SetLimit(20)); err != nil {
+		return nil, err
+	} else if err := cursor.All(ctx, &attrRows); err != nil {
+		return nil, err
+	}
+	userIDs := make([]string, 0, len(attrRows))
+	for _, row := range attrRows {
+		if row.UserID != "" {
+			userIDs = append(userIDs, row.UserID)
+		}
+	}
+	if len(userIDs) > 0 {
+		attrOrgFilter := bson.M{"user_id": bson.M{"$in": userIDs}}
+		if org != nil && !org.ID.IsZero() {
+			attrOrgFilter["organization_id"] = org.ID
+		}
+		var attrOrgRows []orgUserRow
+		if cursor, err := db.Collection("organization_user").Find(ctx, attrOrgFilter, options.Find().SetLimit(20)); err != nil {
+			return nil, err
+		} else if err := cursor.All(ctx, &attrOrgRows); err != nil {
+			return nil, err
+		}
+		for _, row := range attrOrgRows {
+			addID(row.ImServerUserID)
+		}
+	}
+
+	return ids, nil
 }
 
 // dawn 2026-05-06 修复聊天记录名称查询：OpenIM 仅支持 ID 查询，CMS 代理层补充昵称过滤。
