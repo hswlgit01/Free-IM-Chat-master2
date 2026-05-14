@@ -70,6 +70,8 @@ type QueryUserReceiveHistoryReq struct {
 type CheckTransactionCompletedReq struct {
 	TransactionID string `json:"transaction_id" binding:"required"` // 交易ID
 	UserID        string `json:"user_id"`                           // 用户ID，用于检查是否领取过
+	// dawn 2026-05-14 修复红包重登后已领取显示待领取：允许客户端传 IM 用户ID，兼容领取记录 user_id/user_im_id 不一致。
+	OpUserImID string `form:"-" json:"-"`
 }
 
 type ListOrgTransactions struct {

@@ -201,6 +201,10 @@ func (ctl *TransactionCtl) CheckTransactionCompleted(c *gin.Context) {
 
 	// 从上下文获取用户ID
 	req.UserID = mctx.GetOpUserID(c)
+	// dawn 2026-05-14 修复红包重登后已领取显示待领取：token 用户ID为空或与领取记录不一致时，用 IM 用户ID兜底。
+	if imID := c.GetHeader("X-User-IM-ID"); imID != "" {
+		req.OpUserImID = imID
+	}
 
 	// 调用服务层
 	transactionService := svc2.NewTransactionService()

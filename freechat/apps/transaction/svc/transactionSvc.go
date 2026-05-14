@@ -1717,7 +1717,12 @@ func (t *TransactionService) CheckTransactionCompleted(ctx context.Context, req 
 
 	// 协程2: 直接查库判断用户是否领取
 	go func() {
-		if req.UserID == "" {
+		// dawn 2026-05-14 修复红包重登后已领取显示待领取：用 token 用户ID或请求头 IM 用户ID按 user_id/user_im_id 双路匹配。
+		opUserID := req.UserID
+		if opUserID == "" {
+			opUserID = req.OpUserImID
+		}
+		if opUserID == "" {
 			receivedChan <- receivedResult{false, nil}
 			return
 		}
@@ -1725,7 +1730,7 @@ func (t *TransactionService) CheckTransactionCompleted(ctx context.Context, req 
 		// 直接查询MongoDB中用户是否有该交易的领取记录
 		mongoCli := plugin.MongoCli().GetDB()
 		receiveRecordDao := model.NewReceiveRecordDao(mongoCli)
-		_, err := receiveRecordDao.GetByTransactionAndUser(ctx, req.TransactionID, req.UserID)
+		_, err := receiveRecordDao.GetByTransactionAndUserOrImID(ctx, req.TransactionID, opUserID)
 		if err != nil {
 			if dbutil.IsDBNotFound(err) {
 				// 用户未领取过
@@ -1733,7 +1738,7 @@ func (t *TransactionService) CheckTransactionCompleted(ctx context.Context, req 
 				return
 			}
 			// 其他错误，仍然返回未领取但不抛出错误
-			log.ZWarn(ctx, "查询用户领取记录失败", err, "transaction_id", req.TransactionID, "user_id", req.UserID)
+			log.ZWarn(ctx, "查询用户领取记录失败", err, "transaction_id", req.TransactionID, "user_id", opUserID)
 			receivedChan <- receivedResult{false, nil}
 			return
 		}
