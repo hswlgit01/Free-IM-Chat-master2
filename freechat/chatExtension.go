@@ -17,6 +17,7 @@ import (
 	"github.com/openimsdk/chat/freechat/apps/lottery"
 	"github.com/openimsdk/chat/freechat/apps/operationLog"
 	"github.com/openimsdk/chat/freechat/apps/points"
+	"github.com/openimsdk/chat/freechat/apps/sensitiveWord"
 	"github.com/openimsdk/chat/freechat/apps/systemStatistics"
 	"github.com/openimsdk/chat/freechat/apps/user"
 
@@ -849,6 +850,15 @@ func registerDepAdminRouter(router *gin.Engine) {
 		messageApi.POST("/search", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsSearch) // 查询聊天记录并记录审计
 		messageApi.POST("/revoke", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsRevoke) // 撤回聊天消息并记录审计
 		messageApi.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsDelete) // 删除聊天消息并记录审计
+	}
+
+	sensitiveWordApi := depAdminRouter.Group("/sensitive_word") // dawn 2026-05-14 新增敏感词维护：提供后台词表增删改查接口。
+	{
+		sensitiveWordCtl := sensitiveWord.NewSensitiveWordCtl()
+		sensitiveWordApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), sensitiveWordCtl.CmsList)      // 查询敏感词列表
+		sensitiveWordApi.POST("/create", chatMiddleware.CheckToken, depmw.CheckOrganization(), sensitiveWordCtl.CmsCreate) // 新增敏感词
+		sensitiveWordApi.POST("/update", chatMiddleware.CheckToken, depmw.CheckOrganization(), sensitiveWordCtl.CmsUpdate) // 修改敏感词
+		sensitiveWordApi.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), sensitiveWordCtl.CmsDelete) // 删除敏感词
 	}
 
 	appLogApi := depAdminRouter.Group("/app_log")
