@@ -3,10 +3,12 @@ package sensitiveWord
 import (
 	"context"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/openimsdk/chat/freechat/middleware"
@@ -46,6 +48,11 @@ type SensitiveWord struct {
 type SensitiveWordListResp struct {
 	Total int64           `json:"total"`
 	Data  []SensitiveWord `json:"data"`
+}
+
+// dawn 2026-05-15 修复发送方敏感词未脱敏：给客户端返回启用词表，发送前本地等长替换。
+type SensitiveWordEnabledResp struct {
+	Words []string `json:"words"`
 }
 
 type SaveSensitiveWordReq struct {
@@ -169,6 +176,54 @@ func (ctl *SensitiveWordCtl) CmsList(c *gin.Context) {
 		return
 	}
 	apiresp.GinSuccess(c, SensitiveWordListResp{Total: total, Data: rows})
+}
+
+// AppEnabledList 查询当前组织启用中的敏感词，供客户端发送前脱敏。
+func (ctl *SensitiveWordCtl) AppEnabledList(c *gin.Context) {
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	coll, err := sensitiveWordCollection()
+	if err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	cursor, err := coll.Find(c,
+		bson.M{"org_id": org.ID, "status": SensitiveWordEnabled},
+		options.Find().SetProjection(bson.M{"word": 1}).SetLimit(5000),
+	)
+	if err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	defer cursor.Close(c)
+
+	var rows []struct {
+		Word string `bson:"word"`
+	}
+	if err := cursor.All(c, &rows); err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	words := make([]string, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		word := strings.TrimSpace(row.Word)
+		if word == "" {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		words = append(words, word)
+	}
+	sort.Slice(words, func(i, j int) bool {
+		return utf8.RuneCountInString(words[i]) > utf8.RuneCountInString(words[j])
+	})
+	apiresp.GinSuccess(c, SensitiveWordEnabledResp{Words: words})
 }
 
 // CmsCreate 新增敏感词，重复词按当前组织覆盖为最新配置。

@@ -276,6 +276,14 @@ func registerDepRouter(router *gin.Engine) {
 			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), appLogCtl.Upload)
 	}
 
+	// dawn 2026-05-15 修复发送方敏感词未脱敏：客户端获取启用词表后可在本地先替换展示。
+	{
+		sensitiveWordCtl := sensitiveWord.NewSensitiveWordCtl()
+		sensitiveWordApi := depRouter.Group("/sensitive_word")
+		sensitiveWordApi.GET("/enabled", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), sensitiveWordCtl.AppEnabledList)
+	}
+
 	// 身份认证相关路由
 	identityCtl := identity.NewIdentityCtl()
 	{
