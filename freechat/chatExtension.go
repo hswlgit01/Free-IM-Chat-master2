@@ -14,6 +14,7 @@ import (
 	"github.com/openimsdk/chat/freechat/apps/platformConfig"
 
 	"github.com/openimsdk/chat/freechat/apps/checkin"
+	"github.com/openimsdk/chat/freechat/apps/customEmoji"
 	"github.com/openimsdk/chat/freechat/apps/lottery"
 	"github.com/openimsdk/chat/freechat/apps/operationLog"
 	"github.com/openimsdk/chat/freechat/apps/points"
@@ -282,6 +283,20 @@ func registerDepRouter(router *gin.Engine) {
 		sensitiveWordApi := depRouter.Group("/sensitive_word")
 		sensitiveWordApi.GET("/enabled", chatMiddleware.CheckToken,
 			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), sensitiveWordCtl.AppEnabledList)
+	}
+
+	// dawn 2026-06-04 新增收藏图片服务端持久化：清理浏览器缓存后收藏图片仍可从服务端恢复。
+	{
+		customEmojiCtl := customEmoji.NewCustomEmojiCtl()
+		customEmojiApi := depRouter.Group("/custom_emoji")
+		customEmojiApi.GET("/list", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), customEmojiCtl.List)
+		customEmojiApi.POST("/add", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), customEmojiCtl.Add)
+		customEmojiApi.POST("/save", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), customEmojiCtl.Save)
+		customEmojiApi.POST("/delete", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), customEmojiCtl.Delete)
 	}
 
 	// 身份认证相关路由
