@@ -89,6 +89,16 @@ type OrganizationUser struct {
 	InviterType           OrganizationUserInviterType `bson:"inviter_type" json:"inviter_type"`
 	InviterImServerUserId string                      `bson:"inviter_im_server_user_id" json:"inviter_im_server_user_id"`
 
+	// dawn 2026-06-14 支持默认群按二级业务员匹配：读取注册层级链路字段。
+	UserType            string   `bson:"user_type" json:"user_type"`
+	Level               int      `bson:"level" json:"level"`
+	AncestorPath        []string `bson:"ancestor_path" json:"ancestor_path"`
+	Level1Parent        string   `bson:"level1_parent" json:"level1_parent"`
+	Level2Parent        string   `bson:"level2_parent" json:"level2_parent"`
+	Level3Parent        string   `bson:"level3_parent" json:"level3_parent"`
+	TeamSize            int      `bson:"team_size" json:"team_size"`
+	DirectDownlineCount int      `bson:"direct_downline_count" json:"direct_downline_count"`
+
 	Tags      []primitive.ObjectID `bson:"tags,omitempty" json:"tags,omitempty"` // 用户标签ID数组
 	Points    int64                `bson:"points" json:"points"`
 	CreatedAt time.Time            `bson:"created_at" json:"created_at"`
