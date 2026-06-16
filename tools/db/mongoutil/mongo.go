@@ -112,9 +112,12 @@ func NewMongoDB(ctx context.Context, config *Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	db := cli.Database(config.Database)
+	ConfigureMongoSlowQueryLog(db) // dawn 2026-06-16 新增慢查询落表：Mongo 初始化后绑定 slow_query_log 集合。
+
 	return &Client{
 		tx: mtx,
-		db: cli.Database(config.Database),
+		db: db,
 	}, nil
 }
 

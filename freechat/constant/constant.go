@@ -59,6 +59,7 @@ const (
 	CollectionGroupOperationLog          = "group_operation_log" // 群操作日志表
 	CollectionOperationLog               = "operation_log"       // 群操作日志表
 	CollectionAppLog                     = "app_log"             // App 客户端日志表
+	CollectionSlowQueryLog               = "slow_query_log"      // dawn 2026-06-16 新增慢查询日志表：后台查询和导出超过阈值的 Mongo 查询。
 
 	CollectionChangeOrgRecord = "user_change_org"
 

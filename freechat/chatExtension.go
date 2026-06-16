@@ -19,6 +19,7 @@ import (
 	"github.com/openimsdk/chat/freechat/apps/operationLog"
 	"github.com/openimsdk/chat/freechat/apps/points"
 	"github.com/openimsdk/chat/freechat/apps/sensitiveWord"
+	"github.com/openimsdk/chat/freechat/apps/slowQueryLog"
 	"github.com/openimsdk/chat/freechat/apps/systemStatistics"
 	"github.com/openimsdk/chat/freechat/apps/user"
 
@@ -888,6 +889,12 @@ func registerDepAdminRouter(router *gin.Engine) {
 	{
 		appLogCtl := appLog.NewAppLogCtl()
 		appLogApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), appLogCtl.CmsList) // 获取 App 客户端日志
+	}
+
+	slowQueryLogApi := depAdminRouter.Group("/slow_query_log") // dawn 2026-06-16 新增慢查询日志后台：查询并导出 Mongo 慢查询记录。
+	{
+		slowQueryLogCtl := slowQueryLog.NewSlowQueryLogCtl()
+		slowQueryLogApi.GET("/list", chatMiddleware.CheckToken, depmw.CheckOrganization(), slowQueryLogCtl.CmsList) // 获取慢查询日志
 	}
 
 	// 签到相关接口

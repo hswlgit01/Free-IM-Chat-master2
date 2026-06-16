@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var (
@@ -41,6 +43,8 @@ type MongoQueryLogger struct {
 	logPath         string
 	currentDate     string // 当前日志文件的日期
 	retainFileCount int    // 保留的日志文件数量
+	slowCollection  *mongo.Collection
+	slowThreshold   time.Duration
 }
 
 // QueryLogEntry 查询日志条目
@@ -54,6 +58,12 @@ type QueryLogEntry struct {
 }
 
 var logDir = "../../../../logs/"
+
+const (
+	slowQueryCollectionName      = "slow_query_log"
+	defaultSlowQueryThresholdMS  = 3000
+	defaultSlowQueryTTLInSeconds = 30 * 24 * 60 * 60
+)
 
 // InitMongoQueryLogger 初始化 MongoDB 查询日志记录器
 func InitMongoQueryLogger() error {
@@ -94,6 +104,7 @@ func InitMongoQueryLogger() error {
 			logPath:         logPath,
 			currentDate:     dateStr,
 			retainFileCount: retainCount,
+			slowThreshold:   slowQueryThreshold(),
 		}
 
 		// 获取绝对路径用于显示
@@ -113,6 +124,26 @@ func InitMongoQueryLogger() error {
 	})
 
 	return nil
+}
+
+// ConfigureMongoSlowQueryLog 配置慢查询落表集合。
+func ConfigureMongoSlowQueryLog(db *mongo.Database) {
+	if db == nil {
+		return
+	}
+	logger := GetMongoQueryLogger()
+	if logger == nil {
+		return
+	}
+	coll := db.Collection(slowQueryCollectionName)
+	if err := ensureSlowQueryIndexes(coll); err != nil {
+		fmt.Printf("Failed to create MongoDB slow query indexes: %v\n", err)
+		return
+	}
+	logger.mu.Lock()
+	logger.slowCollection = coll
+	logger.slowThreshold = slowQueryThreshold()
+	logger.mu.Unlock()
 }
 
 // GetMongoQueryLogger 获取查询日志记录器实例
@@ -160,6 +191,7 @@ func (l *MongoQueryLogger) LogQuery(ctx context.Context, collection string, oper
 	}
 
 	l.writeLog(entry)
+	l.writeSlowLog(entry, duration)
 }
 
 // writeLog 写入日志到文件
@@ -222,6 +254,77 @@ func (l *MongoQueryLogger) writeLog(entry QueryLogEntry) {
 
 	// 立即刷新到磁盘
 	l.logFile.Sync()
+}
+
+// dawn 2026-06-16 新增慢查询落表：超过阈值的 Mongo 查询写入 slow_query_log，后台可筛选和导出。
+func (l *MongoQueryLogger) writeSlowLog(entry QueryLogEntry, duration time.Duration) {
+	l.mu.Lock()
+	coll := l.slowCollection
+	threshold := l.slowThreshold
+	l.mu.Unlock()
+	if coll == nil || threshold <= 0 || duration < threshold {
+		return
+	}
+
+	durationMS := duration.Milliseconds()
+	if durationMS <= 0 {
+		durationMS = 1
+	}
+	record := bson.M{
+		"created_at":     time.Now().UTC(),
+		"timestamp":      entry.Timestamp,
+		"collection":     entry.Collection,
+		"operation":      entry.Operation,
+		"complete_query": entry.CompleteQuery,
+		"duration":       entry.Duration,
+		"duration_ms":    durationMS,
+	}
+	if entry.Error != "" {
+		record["error"] = entry.Error
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if _, err := coll.InsertOne(ctx, record); err != nil {
+			fmt.Printf("Failed to write MongoDB slow query log: %v\n", err)
+		}
+	}()
+}
+
+func slowQueryThreshold() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("MONGODB_SLOW_QUERY_THRESHOLD_MS"))
+	if raw == "" {
+		return time.Duration(defaultSlowQueryThresholdMS) * time.Millisecond
+	}
+	var ms int64
+	if _, err := fmt.Sscanf(raw, "%d", &ms); err != nil || ms <= 0 {
+		fmt.Printf("Invalid MONGODB_SLOW_QUERY_THRESHOLD_MS: %s, using default: %d\n", raw, defaultSlowQueryThresholdMS)
+		return time.Duration(defaultSlowQueryThresholdMS) * time.Millisecond
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+func ensureSlowQueryIndexes(coll *mongo.Collection) error {
+	_, err := coll.Indexes().CreateMany(context.Background(), []mongo.IndexModel{
+		{
+			Keys:    bson.D{{Key: "created_at", Value: 1}},
+			Options: options.Index().SetName("slow_query_created_at_ttl").SetExpireAfterSeconds(defaultSlowQueryTTLInSeconds),
+		},
+		{
+			Keys:    bson.D{{Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("slow_query_created_at_desc"),
+		},
+		{
+			Keys:    bson.D{{Key: "duration_ms", Value: -1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("slow_query_duration_time"),
+		},
+		{
+			Keys:    bson.D{{Key: "collection", Value: 1}, {Key: "operation", Value: 1}, {Key: "created_at", Value: -1}},
+			Options: options.Index().SetName("slow_query_coll_op_time"),
+		},
+	})
+	return err
 }
 
 // sanitizeFilter 清理过滤器，移除敏感信息
