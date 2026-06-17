@@ -980,53 +980,51 @@ func buildUserFilters(keyword string, canSendFreeMsg *int32) bson.M {
 
 func (o *OrganizationUserDao) SelectJoinUser(ctx context.Context, organizationId primitive.ObjectID, keyword string, userIds []string, notInImUserIds []string, roles []OrganizationUserRole,
 	status []OrganizationUserStatus) ([]*OrganizationUser, error) {
-	// 聚合查询
-	userModel := openImModel.User{}
-	pipeline := []bson.M{
-		{
+	// 构建过滤条件
+	baseFilter := bson.M{}
+	if organizationId != primitive.NilObjectID {
+		baseFilter["organization_id"] = organizationId
+	}
+
+	if len(userIds) > 0 {
+		baseFilter["user_id"] = bson.M{"$in": userIds}
+	}
+
+	if len(notInImUserIds) > 0 {
+		// dawn 2026-06-17 优化组织用户慢查询：排除 IM 用户直接用本表字段，避免先 $lookup user 再对大 $nin 全表过滤。
+		baseFilter["im_server_user_id"] = bson.M{"$nin": notInImUserIds}
+	}
+
+	if len(roles) > 0 {
+		baseFilter["role"] = bson.M{"$in": roles}
+	}
+
+	if len(status) > 0 {
+		baseFilter["status"] = bson.M{"$in": status}
+	}
+
+	findPipeline := make([]bson.M, 0)
+
+	if len(baseFilter) > 0 {
+		findPipeline = append(findPipeline, bson.M{"$match": baseFilter})
+	}
+
+	// dawn 2026-06-17 优化组织用户慢查询：只有昵称关键词需要查 user 表时才做关联。
+	if keyword != "" {
+		userModel := openImModel.User{}
+		findPipeline = append(findPipeline, bson.M{
 			"$lookup": bson.M{
 				"from":         userModel.TableName(),
 				"localField":   "im_server_user_id",
 				"foreignField": "user_id",
 				"as":           "user",
 			},
-		},
-	}
-
-	// 构建过滤条件
-	filter := bson.M{}
-	if organizationId != primitive.NilObjectID {
-		filter["organization_id"] = organizationId
-	}
-
-	if len(userIds) > 0 {
-		filter["user_id"] = bson.M{"$in": userIds}
-	}
-
-	if len(notInImUserIds) > 0 {
-		filter["user.user_id"] = bson.M{"$nin": notInImUserIds}
-	}
-
-	if len(roles) > 0 {
-		filter["role"] = bson.M{"$in": roles}
-	}
-
-	if len(status) > 0 {
-		filter["status"] = bson.M{"$in": status}
-	}
-
-	if keyword != "" {
-		filter["$or"] = []bson.M{
+		})
+		findPipeline = append(findPipeline, bson.M{"$match": bson.M{"$or": []bson.M{
 			{"user.nickname": bson.M{"$regex": keyword, "$options": "i"}},
 			//{"third_user_id": bson.M{"$regex": keyword, "$options": "i"}},
 			{"user_id": bson.M{"$regex": keyword, "$options": "i"}},
-		}
-	}
-
-	findPipeline := make([]bson.M, 0)
-
-	if len(filter) > 0 {
-		findPipeline = append(pipeline, bson.M{"$match": filter})
+		}}})
 	}
 
 	findPipeline = append(findPipeline, bson.M{"$sort": bson.M{"created_at": 1}})

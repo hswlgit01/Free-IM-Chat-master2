@@ -182,43 +182,39 @@ func (d *AppLogDao) Search(ctx context.Context, filter AppLogSearchFilter, page 
 	if len(baseMatch) > 0 {
 		pipeline = append(pipeline, bson.M{"$match": baseMatch})
 	}
-	pipeline = append(pipeline,
-		bson.M{"$lookup": bson.M{
-			"from":         constant.CollectionUser,
-			"localField":   "im_server_user_id",
-			"foreignField": "user_id",
-			"as":           "user",
-		}},
-		bson.M{"$unwind": bson.M{"path": "$user", "preserveNullAndEmptyArrays": true}},
-		bson.M{"$lookup": bson.M{
-			"from":         chatModel.Attribute{}.TableName(),
-			"localField":   "user_id",
-			"foreignField": "user_id",
-			"as":           "attribute",
-		}},
-		bson.M{"$unwind": bson.M{"path": "$attribute", "preserveNullAndEmptyArrays": true}},
-		bson.M{"$lookup": bson.M{
-			"from":         organizationModel.OrganizationUser{}.TableName(),
-			"localField":   "user_id",
-			"foreignField": "user_id",
-			"as":           "org_user",
-		}},
-		bson.M{"$unwind": bson.M{"path": "$org_user", "preserveNullAndEmptyArrays": true}},
-	)
 
-	if filter.Keyword != "" {
-		regex := bson.M{"$regex": filter.Keyword, "$options": "i"}
-		pipeline = append(pipeline, bson.M{"$match": bson.M{"$or": []bson.M{
-			{"message": regex},
-			{"tag": regex},
-			{"user_id": regex},
-			{"im_server_user_id": regex},
-			{"device_id": regex},
-			{"user.nickname": regex},
-			{"attribute.account": regex},
-			{"attribute.nickname": regex},
-		}}})
+	// dawn 2026-06-17 优化 App 日志慢查询：无关键词时先用 app_log 索引分页，再关联用户展示字段。
+	if filter.Keyword == "" {
+		total, err := d.Collection.CountDocuments(ctx, baseMatch)
+		if err != nil {
+			return 0, nil, err
+		}
+		pipeline = append(pipeline, bson.M{"$sort": bson.M{"server_time": -1}})
+		if page != nil {
+			pipeline = append(pipeline, page.ToBsonMList()...)
+		}
+		pipeline = append(pipeline, appLogJoinStages()...)
+
+		rows, err := mongoutil.Aggregate[*AppLogJoinAll](ctx, d.Collection, pipeline)
+		if err != nil {
+			return 0, nil, err
+		}
+		return total, rows, nil
 	}
+
+	pipeline = append(pipeline, appLogJoinStages()...)
+
+	regex := bson.M{"$regex": filter.Keyword, "$options": "i"}
+	pipeline = append(pipeline, bson.M{"$match": bson.M{"$or": []bson.M{
+		{"message": regex},
+		{"tag": regex},
+		{"user_id": regex},
+		{"im_server_user_id": regex},
+		{"device_id": regex},
+		{"user.nickname": regex},
+		{"attribute.account": regex},
+		{"attribute.nickname": regex},
+	}}})
 
 	countPipeline := append([]bson.M{}, pipeline...)
 	countPipeline = append(countPipeline, bson.M{"$count": "total"})
@@ -244,6 +240,32 @@ func (d *AppLogDao) Search(ctx context.Context, filter AppLogSearchFilter, page 
 	}
 
 	return extractTotal(countResult), rows, nil
+}
+
+func appLogJoinStages() []bson.M {
+	return []bson.M{
+		bson.M{"$lookup": bson.M{
+			"from":         constant.CollectionUser,
+			"localField":   "im_server_user_id",
+			"foreignField": "user_id",
+			"as":           "user",
+		}},
+		bson.M{"$unwind": bson.M{"path": "$user", "preserveNullAndEmptyArrays": true}},
+		bson.M{"$lookup": bson.M{
+			"from":         chatModel.Attribute{}.TableName(),
+			"localField":   "user_id",
+			"foreignField": "user_id",
+			"as":           "attribute",
+		}},
+		bson.M{"$unwind": bson.M{"path": "$attribute", "preserveNullAndEmptyArrays": true}},
+		bson.M{"$lookup": bson.M{
+			"from":         organizationModel.OrganizationUser{}.TableName(),
+			"localField":   "user_id",
+			"foreignField": "user_id",
+			"as":           "org_user",
+		}},
+		bson.M{"$unwind": bson.M{"path": "$org_user", "preserveNullAndEmptyArrays": true}},
+	}
 }
 
 func extractTotal(countResult []bson.M) int64 {
