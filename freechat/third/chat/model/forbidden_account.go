@@ -61,6 +61,38 @@ func (f *ForbiddenAccountDao) FindAllIDs(ctx context.Context) ([]string, error) 
 	return userIDs, nil
 }
 
+// dawn 2026-06-17 优化组织查询慢接口：按小批量 IM 用户ID 查询封禁集合，避免每次读取全量封禁账号。
+func (f *ForbiddenAccountDao) FindIDSet(ctx context.Context, userIDs []string) (map[string]struct{}, error) {
+	idSet := make(map[string]struct{}, len(userIDs))
+	if len(userIDs) == 0 {
+		return idSet, nil
+	}
+
+	cursor, err := f.Collection.Find(
+		ctx,
+		bson.M{"user_id": bson.M{"$in": userIDs}},
+		options.Find().SetProjection(bson.M{"user_id": 1}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	for cursor.Next(ctx) {
+		var account ForbiddenAccount
+		if err := cursor.Decode(&account); err != nil {
+			continue
+		}
+		if account.UserID != "" {
+			idSet[account.UserID] = struct{}{}
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+	return idSet, nil
+}
+
 // Take 根据用户ID获取禁用记录
 func (f *ForbiddenAccountDao) Take(ctx context.Context, userID string) (*ForbiddenAccount, error) {
 	return mongoutil.FindOne[*ForbiddenAccount](ctx, f.Collection, bson.M{"user_id": userID})

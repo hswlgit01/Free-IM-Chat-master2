@@ -1946,14 +1946,33 @@ func (w *OrganizationUserSvc) GetUserAllOrg(keyword string, userIds []string) (*
 	orgUserDao := model.NewOrganizationUserDao(db)
 	forbiddenAccountDao := chatModel.NewForbiddenAccountDao(db)
 
-	notInImUserIds, err := forbiddenAccountDao.FindAllIDs(context.TODO())
+	// dawn 2026-06-17 优化登录/组织切换慢查询：先查当前用户组织，再按结果小批量排除封禁账号。
+	orgUser, err := orgUserDao.SelectJoinUser(context.TODO(), primitive.NilObjectID, keyword, userIds, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	orgUser, err := orgUserDao.SelectJoinUser(context.TODO(), primitive.NilObjectID, keyword, userIds, notInImUserIds, nil, nil)
+	imUserIDs := make([]string, 0, len(orgUser))
+	for _, record := range orgUser {
+		if record != nil && record.ImServerUserId != "" {
+			imUserIDs = append(imUserIDs, record.ImServerUserId)
+		}
+	}
+	forbiddenIDSet, err := forbiddenAccountDao.FindIDSet(context.TODO(), imUserIDs)
 	if err != nil {
 		return nil, err
+	}
+	if len(forbiddenIDSet) > 0 {
+		filtered := orgUser[:0]
+		for _, record := range orgUser {
+			if record == nil {
+				continue
+			}
+			if _, forbidden := forbiddenIDSet[record.ImServerUserId]; forbidden {
+				continue
+			}
+			filtered = append(filtered, record)
+		}
+		orgUser = filtered
 	}
 
 	resp := &paginationUtils.ListResp[*dto.OrgUserWithOrgResp]{

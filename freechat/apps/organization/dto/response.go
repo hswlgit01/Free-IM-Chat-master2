@@ -15,10 +15,7 @@ import (
 	openImModel "github.com/openimsdk/chat/freechat/third/openIm/model"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
 	"github.com/openimsdk/chat/freechat/utils/paginationUtils"
-	"github.com/openimsdk/chat/pkg/common/constant"
-	constantpb "github.com/openimsdk/protocol/constant"
 	"github.com/openimsdk/tools/errs"
-	"github.com/openimsdk/tools/log"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -98,7 +95,7 @@ type OrganizationResp struct {
 	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`
 }
 
-func NewOrganizationResp(org *model.Organization, operationID string) (*OrganizationResp, error) {
+func NewOrganizationResp(org *model.Organization, _ string) (*OrganizationResp, error) {
 	mongoCli := plugin.MongoCli()
 	groupDao := openImModel.NewGroupDao(mongoCli.GetDB())
 	orgUserDao := model.NewOrganizationUserDao(mongoCli.GetDB())
@@ -114,37 +111,19 @@ func NewOrganizationResp(org *model.Organization, operationID string) (*Organiza
 		return nil, err
 	}
 
-	imApiCaller := plugin.ImApiCaller()
-	// 在服务内部获取管理员Token
-	openImCtx := context.WithValue(context.Background(), constantpb.OperationID, operationID)
-	adminToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(openImCtx)
-	if err != nil {
-		log.ZError(context.TODO(), "获取IM管理员token失败", err, "operation_id", operationID)
-		return nil, err
-	}
-	openImCtx = context.WithValue(openImCtx, constant.CtxApiToken, adminToken)
-
-	forbiddenAccountDao := chatModel.NewForbiddenAccountDao(mongoCli.GetDB())
-
-	notInImUserIds, err := forbiddenAccountDao.FindAllIDs(context.TODO())
-	if err != nil {
-		return nil, err
-	}
-
-	userTotal, err := orgUserDao.CountByOrgIdAndStatus(context.TODO(), org.ID, notInImUserIds, []model.OrganizationUserRole{
+	roles := []model.OrganizationUserRole{
 		model.OrganizationUserNormalRole,
 		model.OrganizationUserGroupManagerRole,
 		model.OrganizationUserTermManagerRole,
-	})
+	}
+
+	// dawn 2026-06-17 优化组织详情慢查询：不再读取全量封禁用户后拼大 $nin，改由 DAO 按组织内用户排除封禁账号。
+	userTotal, err := orgUserDao.CountAvailableByOrgIdAndRoles(context.TODO(), org.ID, roles)
 	if err != nil {
 		return nil, err
 	}
 
-	verifiedUserTotal, err := orgUserDao.CountVerifiedByOrgId(context.TODO(), org.ID, notInImUserIds, []model.OrganizationUserRole{
-		model.OrganizationUserNormalRole,
-		model.OrganizationUserGroupManagerRole,
-		model.OrganizationUserTermManagerRole,
-	})
+	verifiedUserTotal, err := orgUserDao.CountVerifiedAvailableByOrgIdAndRoles(context.TODO(), org.ID, roles)
 	if err != nil {
 		return nil, err
 	}
