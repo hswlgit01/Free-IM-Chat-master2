@@ -521,6 +521,8 @@ func CreateAttributeQueryIndexes(db *mongo.Database) error {
 		// 层级搜索 $lookup 后按账号/昵称左前缀正则，单列索引便于锚定前缀扫描
 		{Keys: bson.D{{Key: "account", Value: 1}}},
 		//{Keys: bson.D{{Key: "nickname", Value: 1}}},
+		// dawn 2026-06-17 优化组织详情实名统计：支持按实名状态批量匹配 user_id。
+		{Keys: bson.D{{Key: "is_real_name_verified", Value: 1}, {Key: "user_id", Value: 1}}},
 	})
 	if err != nil {
 		return errs.Wrap(err)

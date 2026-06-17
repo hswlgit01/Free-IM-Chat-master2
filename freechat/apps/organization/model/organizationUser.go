@@ -1052,28 +1052,16 @@ func (o *OrganizationUserDao) CountByOrgIdAndStatus(ctx context.Context, organiz
 	return mongoutil.Count(ctx, o.Collection, filter)
 }
 
-// dawn 2026-06-17 优化组织详情慢查询：先按组织和角色缩小 organization_user，再关联封禁表排除禁用账号。
+// dawn 2026-06-17 优化组织详情首屏：成员总数使用 organization_user 索引计数，避免首页同步关联封禁表拖慢加载。
 func (o *OrganizationUserDao) CountAvailableByOrgIdAndRoles(ctx context.Context, organizationId primitive.ObjectID, roles []OrganizationUserRole) (int64, error) {
-	match := bson.M{
+	filter := bson.M{
 		"organization_id": organizationId,
 	}
 	if len(roles) > 0 {
-		match["role"] = bson.M{"$in": roles}
+		filter["role"] = bson.M{"$in": roles}
 	}
 
-	pipeline := []bson.M{
-		{"$match": match},
-		{"$lookup": bson.M{
-			"from":         chatModel.ForbiddenAccount{}.TableName(),
-			"localField":   "im_server_user_id",
-			"foreignField": "user_id",
-			"as":           "forbidden_account",
-		}},
-		{"$match": bson.M{"forbidden_account.0": bson.M{"$exists": false}}},
-		{"$count": "count"},
-	}
-
-	return o.countPipeline(ctx, pipeline)
+	return mongoutil.Count(ctx, o.Collection, filter)
 }
 
 func (o *OrganizationUserDao) CountVerifiedByOrgId(ctx context.Context, organizationId primitive.ObjectID, notInImUserIds []string, roles []OrganizationUserRole) (int64, error) {
@@ -1124,44 +1112,70 @@ func (o *OrganizationUserDao) CountVerifiedByOrgId(ctx context.Context, organiza
 	return result[0].Count, nil
 }
 
-// dawn 2026-06-17 优化组织详情慢查询：实名认证人数同样避免构造全量封禁用户的大 $nin 条件。
+// dawn 2026-06-17 优化组织详情首屏：实名人数按组织用户分批到 attribute 计数，避免跨表全量 $lookup。
 func (o *OrganizationUserDao) CountVerifiedAvailableByOrgIdAndRoles(ctx context.Context, organizationId primitive.ObjectID, roles []OrganizationUserRole) (int64, error) {
-	match := bson.M{
+	filter := bson.M{
 		"organization_id": organizationId,
 	}
 	if len(roles) > 0 {
-		match["role"] = bson.M{"$in": roles}
+		filter["role"] = bson.M{"$in": roles}
 	}
 
-	pipeline := []bson.M{
-		{"$match": match},
-		{"$lookup": bson.M{
-			"from":         chatModel.ForbiddenAccount{}.TableName(),
-			"localField":   "im_server_user_id",
-			"foreignField": "user_id",
-			"as":           "forbidden_account",
-		}},
-		{"$match": bson.M{"forbidden_account.0": bson.M{"$exists": false}}},
-		{"$lookup": bson.M{
-			"from":         chatModel.Attribute{}.TableName(),
-			"localField":   "user_id",
-			"foreignField": "user_id",
-			"as":           "attribute",
-		}},
-		{"$unwind": bson.M{
-			"path":                       "$attribute",
-			"preserveNullAndEmptyArrays": false,
-		}},
-		{"$match": bson.M{
-			"attribute.is_real_name_verified": true,
-		}},
-		{"$group": bson.M{
-			"_id": "$user_id",
-		}},
-		{"$count": "count"},
+	cursor, err := o.Collection.Find(ctx, filter, options.Find().SetProjection(bson.M{"user_id": 1, "_id": 0}))
+	if err != nil {
+		return 0, err
+	}
+	defer cursor.Close(ctx)
+
+	attrColl := o.DB.Collection(chatModel.Attribute{}.TableName())
+	seen := make(map[string]struct{})
+	batch := make([]string, 0, 1000)
+	var total int64
+
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		count, err := mongoutil.Count(ctx, attrColl, bson.M{
+			"user_id":               bson.M{"$in": batch},
+			"is_real_name_verified": true,
+		})
+		if err != nil {
+			return err
+		}
+		total += count
+		batch = batch[:0]
+		return nil
 	}
 
-	return o.countPipeline(ctx, pipeline)
+	for cursor.Next(ctx) {
+		var item struct {
+			UserID string `bson:"user_id"`
+		}
+		if err := cursor.Decode(&item); err != nil {
+			return 0, err
+		}
+		if item.UserID == "" {
+			continue
+		}
+		if _, ok := seen[item.UserID]; ok {
+			continue
+		}
+		seen[item.UserID] = struct{}{}
+		batch = append(batch, item.UserID)
+		if len(batch) >= 1000 {
+			if err := flush(); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err := cursor.Err(); err != nil {
+		return 0, err
+	}
+	if err := flush(); err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 func (o *OrganizationUserDao) countPipeline(ctx context.Context, pipeline []bson.M) (int64, error) {
