@@ -11,32 +11,32 @@ triggers:
 
 stages:
   - stage:
-      name: build_and_deploy
-      displayName: 构建并部署
-      steps:
-        - step: shell@agent
-          name: deploy_chat
-          displayName: Docker 构建部署 Free-IM-Chat
-          hostGroupID: freechat-prod
-          script: |
-            set -euo pipefail
+    name: build_and_deploy
+    displayName: 构建并部署
+    steps:
+      - step: shell@agent
+        name: deploy_chat
+        displayName: Docker 构建部署 Free-IM-Chat
+        hostGroupID: freechat-prod
+        script: |
+          set -euo pipefail
 
-            IMAGE_NAME=freechat-chat
-            CONTAINER_NAME=freechat-chat
+          IMAGE_NAME=freechat-chat
+          CONTAINER_NAME=freechat-chat
 
-            docker build -t "${IMAGE_NAME}:latest" .
+          docker build -t "${IMAGE_NAME}:latest" .
 
-            docker stop "${CONTAINER_NAME}" 2>/dev/null || true
-            docker rm "${CONTAINER_NAME}" 2>/dev/null || true
+          docker stop "${CONTAINER_NAME}" 2>/dev/null || true
+          docker rm "${CONTAINER_NAME}" 2>/dev/null || true
 
-            mkdir -p /data/app/chat/config /data/logs/chat
+          mkdir -p /data/app/chat/config /data/logs/chat
 
-            docker run -d \
-              --name "${CONTAINER_NAME}" \
-              --restart unless-stopped \
-              --network host \
-              -v /data/app/chat/config:/im-chat/config \
-              -v /data/logs/chat:/im-chat/_output/logs \
-              "${IMAGE_NAME}:latest"
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --restart unless-stopped \
+            --network host \
+            -v /data/app/chat/config:/im-chat/config \
+            -v /data/logs/chat:/im-chat/_output/logs \
+            "${IMAGE_NAME}:latest"
 
-            docker ps --filter "name=${CONTAINER_NAME}"
+          docker ps --filter "name=${CONTAINER_NAME}"
