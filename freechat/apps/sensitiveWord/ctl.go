@@ -51,8 +51,40 @@ type SensitiveWordListResp struct {
 }
 
 // dawn 2026-05-15 修复发送方敏感词未脱敏：给客户端返回启用词表，发送前本地等长替换。
+// dawn 2026-06-23 敏感词架构改：附带 version(词数-最新更新时间ms)，客户端按版本号判断是否需要重拉。
 type SensitiveWordEnabledResp struct {
-	Words []string `json:"words"`
+	Words   []string `json:"words"`
+	Version string   `json:"version"`
+}
+
+// dawn 2026-06-23 敏感词架构改：轻量版本号响应，仅返回 version，避免客户端频繁拉全量词表。
+type SensitiveWordVersionResp struct {
+	Version string `json:"version"`
+}
+
+// computeSensitiveWordVersion 计算当前组织启用词表的版本号：
+// 词数 + 最新 update_time(毫秒)，任意增删改都会引起版本变化。
+func computeSensitiveWordVersion(c context.Context, coll *mongo.Collection, orgID primitive.ObjectID) (string, error) {
+	filter := bson.M{"org_id": orgID, "status": SensitiveWordEnabled}
+	count, err := coll.CountDocuments(c, filter)
+	if err != nil {
+		return "", err
+	}
+	var latest struct {
+		UpdateTime time.Time `bson:"update_time"`
+	}
+	err = coll.FindOne(c, filter,
+		options.FindOne().
+			SetProjection(bson.M{"update_time": 1}).
+			SetSort(bson.D{{Key: "update_time", Value: -1}}),
+	).Decode(&latest)
+	var maxMillis int64
+	if err == nil {
+		maxMillis = latest.UpdateTime.UnixMilli()
+	} else if err != mongo.ErrNoDocuments {
+		return "", err
+	}
+	return strconv.FormatInt(count, 10) + "-" + strconv.FormatInt(maxMillis, 10), nil
 }
 
 type SaveSensitiveWordReq struct {
@@ -223,7 +255,32 @@ func (ctl *SensitiveWordCtl) AppEnabledList(c *gin.Context) {
 	sort.Slice(words, func(i, j int) bool {
 		return utf8.RuneCountInString(words[i]) > utf8.RuneCountInString(words[j])
 	})
-	apiresp.GinSuccess(c, SensitiveWordEnabledResp{Words: words})
+	version, err := computeSensitiveWordVersion(c, coll, org.ID)
+	if err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	apiresp.GinSuccess(c, SensitiveWordEnabledResp{Words: words, Version: version})
+}
+
+// AppVersion 仅返回当前组织启用词表的版本号，客户端据此判断是否需要重新拉取全量词表。
+func (ctl *SensitiveWordCtl) AppVersion(c *gin.Context) {
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	coll, err := sensitiveWordCollection()
+	if err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	version, err := computeSensitiveWordVersion(c, coll, org.ID)
+	if err != nil {
+		apiresp.GinError(c, freeErrors.SystemErr(err))
+		return
+	}
+	apiresp.GinSuccess(c, SensitiveWordVersionResp{Version: version})
 }
 
 // CmsCreate 新增敏感词，重复词按当前组织覆盖为最新配置。

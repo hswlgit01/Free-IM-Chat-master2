@@ -284,6 +284,9 @@ func registerDepRouter(router *gin.Engine) {
 		sensitiveWordApi := depRouter.Group("/sensitive_word")
 		sensitiveWordApi.GET("/enabled", chatMiddleware.CheckToken,
 			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), sensitiveWordCtl.AppEnabledList)
+		// dawn 2026-06-23 敏感词架构改：轻量版本号接口，客户端切前台只拉版本号判断是否需要重拉全量词表。
+		sensitiveWordApi.GET("/version", chatMiddleware.CheckToken,
+			depmw.CheckOrganization(organizationModel.AllOrganizationUserRole...), sensitiveWordCtl.AppVersion)
 	}
 
 	// dawn 2026-06-04 新增收藏图片服务端持久化：清理浏览器缓存后收藏图片仍可从服务端恢复。
