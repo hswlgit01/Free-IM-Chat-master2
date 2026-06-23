@@ -1153,4 +1153,12 @@ func initNotificationAccount(imApiCaller imapi.CallerInterface) {
 		depconstant.DefaultNotificationName,
 		depconstant.DefaultNotificationFaceURL,
 		"")
+	// dawn 2026-06-23 把支付/退款通知账号名从英文 "Payment" 改为中文：AddNotificationAccount 对已存在账号不会更新昵称，
+	// 这里启动时再 Update 一次，确保线上已存在的通知账号名也被刷新为中文。
+	if err := imApiCaller.UpdateNotificationAccount(mctx.WithApiToken(ctxWithOpID, adminToken),
+		depconstant.NOTIFICATION_ADMIN_PAYMENT_SEND_ID,
+		depconstant.DefaultNotificationName,
+		depconstant.DefaultNotificationFaceURL); err != nil {
+		log.ZError(ctx, "更新通知账户昵称失败", err)
+	}
 }

@@ -93,7 +93,8 @@ const (
 	//系统通知用户的ID
 	NOTIFICATION_ADMIN_PAYMENT_SEND_ID = "001"
 	// 默认通知名称
-	DefaultNotificationName = "Payment"
+	// dawn 2026-06-23 退款/支付通知账号名由英文 "Payment" 改为中文。
+	DefaultNotificationName = "支付通知"
 	// 默认通知头像URL
 	DefaultNotificationFaceURL = "https://cweb.chatcdn.org/api/object/07965083964418762527/msg_picture_2d7095971b5cbe01af1e42e2db355b43.png"
 )
