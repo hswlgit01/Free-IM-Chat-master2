@@ -362,8 +362,10 @@ func (o *CheckInDao) SelectJoinOgrUserAndUser(ctx context.Context, imServerUserI
 	}
 
 	// 4. 构造分页 + 排序（默认按 date 倒序，可额外按指定字段降序）
+	// dawn 2026-06-23 修复签到列表 mongo find 报错：前端常传 order=date，与下面始终追加的 date 排序键重复，
+	// MongoDB 对 sort 中出现重复 key 会报错。仅当指定排序字段不是 date 时才追加，避免重复键。
 	sort := bson.D{}
-	if page != nil && page.Order != "" {
+	if page != nil && page.Order != "" && page.Order != "date" {
 		sort = append(sort, bson.E{Key: page.Order, Value: -1})
 	}
 	// 始终保证按签到日期倒序

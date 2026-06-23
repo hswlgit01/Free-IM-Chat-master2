@@ -88,7 +88,7 @@ func ValidateAppUserNickname(ctx context.Context, db *mongo.Database, orgID prim
 	if nicknameImpersonatesOfficialCustomer(nick) {
 		return freeErrors.ApiErr("用户昵称不合法")
 	}
-	if strings.Contains(nick, "官方") || strings.Contains(nick, "客服") || strings.Contains(nick, "会聊") || strings.Contains(nick, "资产") {
+	if strings.Contains(nick, "官方") || strings.Contains(nick, "客服") || strings.Contains(nick, "会聊") || strings.Contains(nick, "心享") || strings.Contains(nick, "资产") {
 		return freeErrors.ApiErr("用户昵称不合法")
 	}
 	if orgID.IsZero() {

@@ -1510,7 +1510,8 @@ type CreateOrganizationBackendAdminReq struct {
 
 type ResetOrganizationUserPasswordReq struct {
 	UserID      string `json:"userID" binding:"required"`
-	NewPassword string `json:"newPassword" binding:"required"`
+	// dawn 2026-06-23 修复重置密码报"无效的参数"：newPassword 改为可选(为空则后端回退默认 123456)，避免前端"重置为默认"未传该字段时 bind 失败。
+	NewPassword string `json:"newPassword"`
 }
 
 type UpdateOrganizationUserNicknameReq struct {
@@ -1699,10 +1700,13 @@ func (w *OrganizationUserSvc) ResetOrganizationUserPassword(ctx context.Context,
 		return freeErrors.ForbiddenErr("backend admin cannot reset super admin password")
 	}
 
-	if strings.TrimSpace(params.NewPassword) == "" {
-		return errs.ErrArgs.WrapMsg("new password must be set")
+	// dawn 2026-06-23 修复组织后台重置密码报"无效的参数"：重置为默认密码时前端可能不传 newPassword，
+	// 为空则回退默认密码 123456，避免必填/空值报错。normalizeOrgPasswordForStorage 会按需做 md5。
+	newPwd := strings.TrimSpace(params.NewPassword)
+	if newPwd == "" {
+		newPwd = "123456"
 	}
-	password := normalizeOrgPasswordForStorage(params.NewPassword)
+	password := normalizeOrgPasswordForStorage(newPwd)
 
 	imApiCaller := plugin.ImApiCaller()
 	apiCtx := context.WithValue(ctx, constantpb.OperationID, operationID)
