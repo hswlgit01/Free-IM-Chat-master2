@@ -259,8 +259,9 @@ func (ctl *TransactionCtl) TestSendNotification(c *gin.Context) {
 	}
 
 	// 构建离线推送信息
+	// dawn 2026-06-24 测试通知离线推送标题英文 "Payment Information" 改为中文。
 	offlinePushInfo := &sdkws.OfflinePushInfo{
-		Title:         "Payment Information",
+		Title:         "支付通知",
 		Desc:          content,
 		IOSPushSound:  "default",
 		IOSBadgeCount: true,

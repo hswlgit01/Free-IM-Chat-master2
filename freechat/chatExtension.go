@@ -973,6 +973,8 @@ func registerDepAdminRouter(router *gin.Engine) {
 		transactionCtl := transaction.NewTransactionCtl()
 		transApi.POST("/record", chatMiddleware.CheckToken, depmw.CheckOrganization(), transactionCtl.QueryTransactionRecords)     // 查询交易记录（重新实现）
 		transApi.POST("/receive_record", chatMiddleware.CheckToken, depmw.CheckOrganization(), transactionCtl.QueryReceiveRecords) // 查询用户领取详情
+		// dawn 2026-06-24 注册测试通知接口：从"支付通知"账号(001)向指定 user_id 发一条通知，用于验证移动端账号名/退款样式。
+		transApi.POST("/test_send_notification", chatMiddleware.CheckToken, depmw.CheckOrganization(), transactionCtl.TestSendNotification) // 测试发送支付通知
 	}
 
 	// 积分管理相关接口
