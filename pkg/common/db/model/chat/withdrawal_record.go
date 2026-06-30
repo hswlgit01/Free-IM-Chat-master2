@@ -165,6 +165,21 @@ func (w *WithdrawalRecord) CountByStatus(ctx context.Context, organizationID str
 	return result, nil
 }
 
+func (w *WithdrawalRecord) HasHandheldIDCardPhoto(ctx context.Context, userID string) (bool, error) {
+	filter := bson.M{
+		"user_id": userID,
+		"handheld_id_card_photo_url": bson.M{
+			"$exists": true,
+			"$ne":     "",
+		},
+	}
+	count, err := w.coll.CountDocuments(ctx, filter, options.Count().SetLimit(1))
+	if err != nil {
+		return false, errs.Wrap(err)
+	}
+	return count > 0, nil
+}
+
 func (w *WithdrawalRecord) findWithPagination(ctx context.Context, filter bson.M, pagination chat.Pagination) ([]*chat.WithdrawalRecord, int64, error) {
 	// 计算总数
 	total, err := w.coll.CountDocuments(ctx, filter)

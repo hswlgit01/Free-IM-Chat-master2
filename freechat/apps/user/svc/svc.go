@@ -199,6 +199,7 @@ type UserFullInfo struct {
 	CanSendFreeMsg     int32  `json:"can_send_free_msg"`
 	IsRealNameVerified bool   `json:"isRealNameVerified"` // 是否已实名认证
 	RealName           string `json:"realName,omitempty"` // 真实姓名
+	LastLoginTime      int64  `json:"last_login_time,omitempty"`
 }
 
 // BatchForceLogoutReq 批量强制下线请求
@@ -818,6 +819,19 @@ func (w *UserSvc) FindUserFullInfo(ctx context.Context, req *FindUserFullInfoReq
 		imUserToImUserMap[imUser.UserID] = imUser
 	}
 
+	loginRecordDao := chatModel.NewUserLoginRecordDao(db)
+	loginRecords, err := loginRecordDao.FindLatestByUserIDs(ctx, userIDs)
+	if err != nil {
+		return nil, freeErrors.ApiErr("failed to query user login records: " + err.Error())
+	}
+	userIDToLastLoginTimeMap := make(map[string]int64, len(loginRecords))
+	for _, record := range loginRecords {
+		if record == nil || record.UserID == "" || record.LoginTime.IsZero() {
+			continue
+		}
+		userIDToLastLoginTimeMap[record.UserID] = record.LoginTime.UnixMilli()
+	}
+
 	// 预分配切片容量
 	users := make([]*UserFullInfo, 0, len(req.UserIDs))
 
@@ -861,6 +875,7 @@ func (w *UserSvc) FindUserFullInfo(ctx context.Context, req *FindUserFullInfoReq
 			RegisterType:     attr.RegisterType,
 			OrgRole:          imUserToRoleMap[imUserID],           // 组织角色
 			InvitationCode:   imUserToInvitationCodeMap[imUserID], // 邀请码
+			LastLoginTime:    userIDToLastLoginTimeMap[userID],
 		}
 
 		// 如果有 IM 用户信息，使用 IM 用户的昵称和头像
