@@ -18,7 +18,7 @@ func NewWithdrawalCtl() *WithdrawalCtl {
 // GetWithdrawalRule 获取提现规则
 // @router GET /wallet/withdrawal/rule
 func (w *WithdrawalCtl) GetWithdrawalRule(c *gin.Context) {
-	opUserID, _, err := mctx.Check(c)
+	_, _, err := mctx.Check(c)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -31,7 +31,7 @@ func (w *WithdrawalCtl) GetWithdrawalRule(c *gin.Context) {
 	}
 
 	withdrawalSvc := svc.NewWithdrawalSvc()
-	rule, err := withdrawalSvc.GetWithdrawalRule(c.Request.Context(), organizationID, opUserID)
+	rule, err := withdrawalSvc.GetWithdrawalRule(c.Request.Context(), organizationID)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return

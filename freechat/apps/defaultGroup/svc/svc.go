@@ -355,7 +355,7 @@ func collectDefaultGroupSalespersonIDs(orgUser *organizationModel.OrganizationUs
 		return nil
 	}
 	seen := make(map[string]struct{})
-	out := make([]string, 0, len(orgUser.AncestorPath)+1)
+	out := make([]string, 0, len(orgUser.AncestorPath)+5)
 	add := func(id string) {
 		id = strings.TrimSpace(id)
 		if id == "" {
@@ -367,6 +367,14 @@ func collectDefaultGroupSalespersonIDs(orgUser *organizationModel.OrganizationUs
 		seen[id] = struct{}{}
 		out = append(out, id)
 	}
+	// 注册默认群按业务员匹配时，优先使用注册邀请人。部分老数据或异常注册链路
+	// 可能还没完整写入 ancestor_path，但 inviter 已经能准确表示本次邀请码归属。
+	if orgUser.InviterType == organizationModel.OrganizationUserInviterTypeOrgUser {
+		add(orgUser.Inviter)
+	}
+	add(orgUser.Level1Parent)
+	add(orgUser.Level2Parent)
+	add(orgUser.Level3Parent)
 	for _, ancestorID := range orgUser.AncestorPath {
 		add(ancestorID)
 	}

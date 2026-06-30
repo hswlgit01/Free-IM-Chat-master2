@@ -29,12 +29,7 @@ func NewWithdrawalSvc() *WithdrawalSvc {
 }
 
 // GetWithdrawalRule 获取提现规则
-func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID, userID string) (*withdrawalDto.GetWithdrawalRuleResp, error) {
-	hasHandheldPhoto, err := withdrawalModel.GetWithdrawalRecordDao().HasHandheldIDCardPhoto(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-
+func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID string) (*withdrawalDto.GetWithdrawalRuleResp, error) {
 	rule, err := withdrawalModel.GetWithdrawalRuleDao().FindByOrganizationID(ctx, organizationID)
 	if err != nil {
 		if dbutil.IsDBNotFound(err) {
@@ -47,7 +42,7 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID, u
 				FeeRate:                 1.0,
 				NeedRealName:            true,
 				NeedBindAccount:         true,
-				NeedHandheldIDCardPhoto: !hasHandheldPhoto,
+				NeedHandheldIDCardPhoto: true,
 			}, nil
 		}
 		return nil, errs.Wrap(err)
@@ -61,7 +56,7 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID, u
 		FeeRate:                 rule.FeeRate,
 		NeedRealName:            rule.NeedRealName,
 		NeedBindAccount:         rule.NeedBindAccount,
-		NeedHandheldIDCardPhoto: !hasHandheldPhoto,
+		NeedHandheldIDCardPhoto: true,
 	}, nil
 }
 
@@ -138,13 +133,9 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 		}
 	}
 
-	// 7. 首次提现需要上传手持身份证照片，之后根据历史记录中的照片标志跳过。
-	hasHandheldPhoto, err := withdrawalModel.GetWithdrawalRecordDao().HasHandheldIDCardPhoto(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	if !hasHandheldPhoto && req.HandheldIDCardPhotoURL == "" {
-		return nil, freeErrors.ParameterInvalidErr.WrapMsg("handheld ID card photo is required for first withdrawal")
+	// 7. 每次提现都需要上传本次手持身份证照片。
+	if req.HandheldIDCardPhotoURL == "" {
+		return nil, freeErrors.ParameterInvalidErr.WrapMsg("handheld ID card photo is required")
 	}
 
 	// 8. 获取钱包信息和检查余额

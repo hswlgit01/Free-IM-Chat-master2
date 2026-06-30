@@ -61,8 +61,6 @@ type WithdrawalRecordInterface interface {
 	FindByOrganization(ctx context.Context, organizationID string, status *int32, keyword string, pagination Pagination) ([]*WithdrawalRecord, int64, error)
 	// CountByStatus 统计各状态的提现记录数量
 	CountByStatus(ctx context.Context, organizationID string) (map[int32]int64, error)
-	// HasHandheldIDCardPhoto 查询用户是否已上传过手持身份证照片
-	HasHandheldIDCardPhoto(ctx context.Context, userID string) (bool, error)
 }
 
 type Pagination struct {

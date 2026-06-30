@@ -20,7 +20,7 @@ type SubmitWithdrawalReq struct {
 	PaymentMethodID        string  `json:"paymentMethodId" binding:"required"`   // 收款方式ID
 	PayPassword            string  `json:"payPassword" binding:"required,len=6"` // 支付密码
 	CurrencyID             string  `json:"currencyId"`                           // 币种ID(可选,如果不提供则自动选择)
-	HandheldIDCardPhotoURL string  `json:"handheldIdCardPhotoUrl"`               // 手持身份证照片URL(首次提现必填)
+	HandheldIDCardPhotoURL string  `json:"handheldIdCardPhotoUrl"`               // 手持身份证照片URL(每次提现必填)
 }
 
 // SubmitWithdrawalResp 提交提现申请响应
