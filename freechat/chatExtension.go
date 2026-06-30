@@ -875,7 +875,11 @@ func registerDepAdminRouter(router *gin.Engine) {
 	{
 		messageCtl := message.NewMessageCtl()
 		messageApi.POST("/search", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsSearch) // 查询聊天记录并记录审计
-		messageApi.POST("/revoke", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsRevoke) // 撤回聊天消息并记录审计
+		messageApi.POST("/revoke", chatMiddleware.CheckToken, depmw.CheckOrganization(
+			organizationModel.OrganizationUserSuperAdminRole,
+			organizationModel.OrganizationUserBackendAdminRole,
+			organizationModel.OrganizationUserGroupManagerRole,
+		), messageCtl.CmsRevoke) // 撤回聊天消息并记录审计
 		messageApi.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsDelete) // 删除聊天消息并记录审计
 	}
 
