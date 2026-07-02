@@ -574,6 +574,11 @@ func (d *TransactionDao) QueryTransactionRecordsWithUserInfo(ctx context.Context
 		})
 	}
 
+	// dawn 2026-07-02 count 优化：慢日志里这条只是要总数，却先跑完 5 个 $lookup(38~171s)。
+	// 记录"仅含 $match"的阶段，无关键词时用它做不带 lookup 的计数(见下方 countPipeline)。
+	matchOnlyStages := make([]bson.M, len(pipeline))
+	copy(matchOnlyStages, pipeline)
+
 	pipeline = append(pipeline,
 		bson.M{
 			"$lookup": bson.M{
@@ -667,7 +672,14 @@ func (d *TransactionDao) QueryTransactionRecordsWithUserInfo(ctx context.Context
 	}
 
 	// 获取总数
-	countPipeline := append(pipeline, bson.M{"$count": "total"})
+	// dawn 2026-07-02 无关键词时用仅含 $match 的管道计数，避免为 count 跑完 5 个 lookup；
+	// 有关键词时过滤依赖 lookup 后字段，仍需完整管道(用副本避免与下方分页共享底层数组)。
+	var countPipeline []bson.M
+	if keyword != "" {
+		countPipeline = append(append([]bson.M{}, pipeline...), bson.M{"$count": "total"})
+	} else {
+		countPipeline = append(matchOnlyStages, bson.M{"$count": "total"})
+	}
 	countResult, err := mongoutil.Aggregate[map[string]interface{}](ctx, d.Collection, countPipeline)
 	if err != nil {
 		return 0, nil, err

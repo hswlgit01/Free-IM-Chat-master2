@@ -3,6 +3,11 @@ package freechat
 import (
 	"context"
 	"fmt"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/openimsdk/chat/freechat/apps/appLog"
 	"github.com/openimsdk/chat/freechat/apps/article"
@@ -173,6 +178,43 @@ func createDatabaseIndex() error {
 
 		return nil
 	*/
+}
+
+// ensureSlowQueryIndexes 仅补齐"慢查询日志(2026-07-02)"定位到的关键缺失索引。
+// dawn 2026-07-02 与被禁用的 createDatabaseIndex 不同：本函数只建这几个索引、用后台构建、
+// 且失败只告警不 panic，异步在 goroutine 里执行，绝不阻塞/中断服务启动。
+// createIndex 幂等：线上已手动建过的会直接跳过。对应脚本 scripts/add_slowquery_indexes.js。
+func ensureSlowQueryIndexes() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.ZWarn(context.Background(), "ensureSlowQueryIndexes panic recovered (non-fatal)", fmt.Errorf("%v", r))
+		}
+	}()
+	db := plugin.MongoCli().GetDB()
+	if db == nil {
+		return
+	}
+	bg := options.Index().SetBackground(true)
+	type idx struct {
+		coll string
+		keys bson.D
+	}
+	items := []idx{
+		{"attribute", bson.D{{Key: "user_id", Value: 1}}},
+		{"attribute", bson.D{{Key: "is_real_name_verified", Value: 1}, {Key: "user_id", Value: 1}}},
+		{"transaction_record", bson.D{{Key: "org_id", Value: 1}, {Key: "transaction_type", Value: 1}}},
+		{"operation_log", bson.D{{Key: "org_id", Value: 1}, {Key: "operation_time", Value: -1}}},
+		{"checkin", bson.D{{Key: "org_id", Value: 1}, {Key: "date", Value: 1}, {Key: "im_server_user_id", Value: 1}}},
+		{"organization_user", bson.D{{Key: "organization_id", Value: 1}, {Key: "role", Value: 1}}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	for _, it := range items {
+		if _, err := db.Collection(it.coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: it.keys, Options: bg}); err != nil {
+			log.ZWarn(ctx, "ensureSlowQueryIndexes: create index failed (non-fatal)", err, "coll", it.coll, "keys", it.keys)
+		}
+	}
+	log.ZInfo(ctx, "ensureSlowQueryIndexes done")
 }
 
 // initCronJobs 初始化并启动所有定时任务
@@ -1118,6 +1160,10 @@ func RegisterChatExtension(cfg *plugin.ChatConfig,
 	// if err := createDatabaseIndex(); err != nil {
 	// 	panic(err)
 	// }
+
+	// dawn 2026-07-02 慢查询索引自愈：异步补齐关键缺失索引(attribute.user_id 等)，
+	// 后台构建、失败只告警不 panic，不阻塞启动。幂等，线上已存在则跳过。
+	go ensureSlowQueryIndexes()
 
 	// 初始化通知账户
 	initNotificationAccount(imApiCaller)
