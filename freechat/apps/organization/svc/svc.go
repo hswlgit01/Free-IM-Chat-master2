@@ -2089,6 +2089,21 @@ type ClearOrgUserLoginCityReq struct {
 	UserId string `json:"user_id"`
 }
 
+// GetOrgUserOperationTimes dawn 2026-07-04 最近操作时间：批量查询用户(chat user_id)最近操作时间，返回 user_id→毫秒。
+func (w *OrganizationUserSvc) GetOrgUserOperationTimes(ctx context.Context, userIDs []string) (map[string]int64, error) {
+	records, err := chatModel.NewUserOperationTimeDao(plugin.MongoCli().GetDB()).FindByUserIDs(ctx, userIDs)
+	if err != nil {
+		return nil, errs.Unwrap(err)
+	}
+	result := make(map[string]int64, len(records))
+	for _, r := range records {
+		if r != nil && r.UserID != "" && !r.OperationTime.IsZero() {
+			result[r.UserID] = r.OperationTime.UnixMilli()
+		}
+	}
+	return result, nil
+}
+
 func (w *OrganizationUserSvc) ClearOrgUserLoginCity(ctx context.Context, orgId primitive.ObjectID, params ClearOrgUserLoginCityReq) error {
 	db := plugin.MongoCli().GetDB()
 	orgUser, err := model.NewOrganizationUserDao(db).GetByUserIdAndOrgId(ctx, params.UserId, orgId)

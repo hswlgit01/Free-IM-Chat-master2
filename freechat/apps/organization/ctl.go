@@ -658,6 +658,23 @@ func (w *OrganizationUserCtl) PostUpdateUserStatus(c *gin.Context) {
 	apiresp.GinSuccess(c, map[string]interface{}{})
 }
 
+// dawn 2026-07-04 最近操作时间：批量查询组织用户最近操作时间(user_id→毫秒)。
+func (w *OrganizationUserCtl) PostOrgUserOperationTimes(c *gin.Context) {
+	var data struct {
+		UserIDs []string `json:"user_ids"`
+	}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+	result, err := svc.NewOrganizationUserService().GetOrgUserOperationTimes(c, data.UserIDs)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiresp.GinSuccess(c, result)
+}
+
 // dawn 2026-07-03 异地登录限制：后台清除组织用户的登录城市绑定。
 func (w *OrganizationUserCtl) PostClearOrgUserLoginCity(c *gin.Context) {
 	data := svc.ClearOrgUserLoginCityReq{}
