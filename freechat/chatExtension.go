@@ -640,14 +640,16 @@ func registerDepAdminRouter(router *gin.Engine) {
 		orgUserApi := depAdminRouter.Group("/organization_user")
 		orgUserApi.POST("/post_org_user", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostGetOrgUser)              // 查询组织用户（新版POST接口）
 		orgUserApi.POST("/wallet_snapshot", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostOrgUserWalletSnapshot) // 批量钱包/补偿金（配合 omit_wallet 列表）
+		orgUserApi.GET("/admin_permission", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.GetAdminPermission)        // 查询当前后台账号页面权限与数据范围
 
-		orgUserApi.POST("/add_backend_admin", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostAddBackendAdmin)                 // 添加后台管理员
-		orgUserApi.POST("/update_user_status", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserStatus)               // 修改用户状态
-		orgUserApi.POST("/update_web_user_role", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateWebUserRole)            // 修改web用户角色,添加群组管理员
-		orgUserApi.POST("/update_admin_data_scope", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateAdminDataScope)      // 修改后台管理员可见业务员/用户范围
-		orgUserApi.POST("/update_can_send_free_msg", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserCanSendFreeMsg) // 更新用户是否可自由发送消息
-		orgUserApi.POST("/reset_password", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostResetOrgUserPassword)               // 组织后台重置组织用户密码
-		orgUserApi.POST("/update_nickname", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateOrgUserNickname)             // 组织后台修改组织用户昵称
+		orgUserApi.POST("/add_backend_admin", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostAddBackendAdmin)                      // 添加后台管理员
+		orgUserApi.POST("/update_user_status", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserStatus)                    // 修改用户状态
+		orgUserApi.POST("/update_web_user_role", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateWebUserRole)                 // 修改web用户角色,添加群组管理员
+		orgUserApi.POST("/update_admin_page_permission", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateAdminPagePermission) // 修改后台管理员页面权限
+		orgUserApi.POST("/update_admin_data_scope", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateAdminDataScope)           // 修改后台管理员可见业务员/用户范围
+		orgUserApi.POST("/update_can_send_free_msg", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserCanSendFreeMsg)      // 更新用户是否可自由发送消息
+		orgUserApi.POST("/reset_password", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostResetOrgUserPassword)                    // 组织后台重置组织用户密码
+		orgUserApi.POST("/update_nickname", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateOrgUserNickname)                  // 组织后台修改组织用户昵称
 	}
 
 	// 用户标签管理路由 - 集成到组织用户控制器中

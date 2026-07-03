@@ -1500,19 +1500,33 @@ func NewOrganizationUserService() *OrganizationUserSvc {
 }
 
 type CreateOrganizationBackendAdminReq struct {
-	Nickname          string   `json:"nickname"  binding:"required"`
-	FaceURL           string   `json:"faceURL"`
-	Birth             int64    `json:"birth"`
-	Gender            int32    `json:"gender"`
-	Account           string   `json:"account" binding:"required"`
-	Password          string   `json:"password"  binding:"required"`
-	AdminScopeUserIds []string `json:"admin_scope_user_ids"`
+	Nickname             string   `json:"nickname"  binding:"required"`
+	FaceURL              string   `json:"faceURL"`
+	Birth                int64    `json:"birth"`
+	Gender               int32    `json:"gender"`
+	Account              string   `json:"account" binding:"required"`
+	Password             string   `json:"password"  binding:"required"`
+	AdminScopeUserIds    []string `json:"admin_scope_user_ids"`
+	AdminScopeAccounts   []string `json:"admin_scope_accounts"`
+	AdminPagePermissions []string `json:"admin_page_permissions"`
 }
 
 type UpdateAdminDataScopeReq struct {
 	UserId             string   `json:"user_id" binding:"required"`
 	AdminScopeUserIds  []string `json:"admin_scope_user_ids"`
 	AdminScopeAccounts []string `json:"admin_scope_accounts"`
+}
+
+type UpdateAdminPagePermissionReq struct {
+	UserId               string   `json:"user_id" binding:"required"`
+	AdminPagePermissions []string `json:"admin_page_permissions"`
+}
+
+type AdminPermissionResp struct {
+	Role                 model.OrganizationUserRole `json:"role"`
+	AdminScopeUserIds    []string                   `json:"admin_scope_user_ids"`
+	AdminScopeAccounts   []string                   `json:"admin_scope_accounts"`
+	AdminPagePermissions []string                   `json:"admin_page_permissions"`
 }
 
 func distinctNonEmptyStrings(values []string) []string {
@@ -1616,13 +1630,15 @@ func (w *OrganizationUserSvc) CreateOrganizationBackendAdmin(operatorId string, 
 		}
 
 		orgUser := &model.OrganizationUser{
-			OrganizationId:    organization.ID,
-			UserId:            newUserID,
-			Role:              model.OrganizationUserBackendAdminRole,
-			Status:            model.OrganizationUserEnableStatus,
-			RegisterType:      model.OrganizationUserRegisterTypeBackend,
-			ImServerUserId:    newImServerUserID,
-			AdminScopeUserIds: distinctNonEmptyStrings(params.AdminScopeUserIds),
+			OrganizationId:       organization.ID,
+			UserId:               newUserID,
+			Role:                 model.OrganizationUserBackendAdminRole,
+			Status:               model.OrganizationUserEnableStatus,
+			RegisterType:         model.OrganizationUserRegisterTypeBackend,
+			ImServerUserId:       newImServerUserID,
+			AdminScopeUserIds:    distinctNonEmptyStrings(params.AdminScopeUserIds),
+			AdminScopeAccounts:   distinctNonEmptyStrings(params.AdminScopeAccounts),
+			AdminPagePermissions: distinctNonEmptyStrings(params.AdminPagePermissions),
 		}
 		if err := orgUserDao.Create(sessionCtx, orgUser); err != nil {
 			return err
@@ -1979,7 +1995,42 @@ func (w *OrganizationUserSvc) UpdateAdminDataScope(ctx context.Context, orgId pr
 		}
 	}
 
-	return orgUserDao.UpdateAdminScopeUserIds(ctx, orgId, params.UserId, scopeUserIDs)
+	return orgUserDao.UpdateAdminScopeUserIds(ctx, orgId, params.UserId, scopeUserIDs, scopeAccounts)
+}
+
+func (w *OrganizationUserSvc) UpdateAdminPagePermission(ctx context.Context, orgId primitive.ObjectID, params UpdateAdminPagePermissionReq) error {
+	db := plugin.MongoCli().GetDB()
+	orgUserDao := model.NewOrganizationUserDao(db)
+
+	target, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserId, orgId)
+	if err != nil {
+		return err
+	}
+	if target.Role != model.OrganizationUserBackendAdminRole &&
+		target.Role != model.OrganizationUserSuperAdminRole {
+		return freeErrors.ForbiddenErr("page permissions can only be configured for backend admins")
+	}
+
+	permissions := distinctNonEmptyStrings(params.AdminPagePermissions)
+	for _, permission := range permissions {
+		if !model.IsAdminPagePermission(model.PermissionCode(permission)) {
+			return freeErrors.ParameterInvalidErr
+		}
+	}
+
+	return orgUserDao.UpdateAdminPagePermissions(ctx, orgId, params.UserId, permissions)
+}
+
+func (w *OrganizationUserSvc) GetAdminPermission(operator *model.OrganizationUser) (*AdminPermissionResp, error) {
+	if operator == nil {
+		return nil, freeErrors.ForbiddenErr("operator not found")
+	}
+	return &AdminPermissionResp{
+		Role:                 operator.Role,
+		AdminScopeUserIds:    operator.AdminScopeUserIds,
+		AdminScopeAccounts:   operator.AdminScopeAccounts,
+		AdminPagePermissions: operator.AdminPagePermissions,
+	}, nil
 }
 
 type UpdateUserStatusReq struct {
@@ -3115,6 +3166,12 @@ func (w *OrganizationUserSvc) GetOrgUserByAccount(orgId primitive.ObjectID, req 
 			}, nil
 		}
 		return nil, fmt.Errorf("failed to query organization user: %w", err)
+	}
+	if len(req.UserIds) > 0 && !slices.Contains(req.UserIds, attr.UserID) {
+		return &paginationUtils.ListResp[*dto.OrgUserResp]{
+			Total: 0,
+			List:  []*dto.OrgUserResp{},
+		}, nil
 	}
 
 	// 按最近登录 IP 子串筛选（与列表接口 login_ip 一致）

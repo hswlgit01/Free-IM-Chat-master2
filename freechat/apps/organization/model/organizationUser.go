@@ -102,6 +102,12 @@ type OrganizationUser struct {
 	// 后台管理员数据范围：绑定业务员/用户 user_id 后，只能查看这些账号及其下级链路数据。
 	// 空数组表示不限制；SuperAdmin 始终不受该字段限制。
 	AdminScopeUserIds []string `bson:"admin_scope_user_ids,omitempty" json:"admin_scope_user_ids,omitempty"`
+	// 后台管理员数据范围的账号展示值；实际过滤使用 AdminScopeUserIds。
+	AdminScopeAccounts []string `bson:"admin_scope_accounts,omitempty" json:"admin_scope_accounts,omitempty"`
+
+	// 后台管理员页面权限：按后台登录账号单独配置可见页面。
+	// SuperAdmin 始终可见全部页面；BackendAdmin 为空时按旧数据兼容为全部页面。
+	AdminPagePermissions []string `bson:"admin_page_permissions,omitempty" json:"admin_page_permissions,omitempty"`
 
 	Tags      []primitive.ObjectID `bson:"tags,omitempty" json:"tags,omitempty"` // 用户标签ID数组
 	Points    int64                `bson:"points" json:"points"`
@@ -398,9 +404,11 @@ func (o *OrganizationUserDao) GetByIMServerUserIds(ctx context.Context, imServer
 }
 
 type UpdateInfoByIdField struct {
-	Role              OrganizationUserRole
-	Status            OrganizationUserStatus
-	AdminScopeUserIds []string
+	Role                 OrganizationUserRole
+	Status               OrganizationUserStatus
+	AdminScopeUserIds    []string
+	AdminScopeAccounts   []string
+	AdminPagePermissions []string
 }
 
 func (o *OrganizationUserDao) UpdateInfoById(ctx context.Context, id primitive.ObjectID, updateField UpdateInfoByIdField) error {
@@ -412,16 +420,33 @@ func (o *OrganizationUserDao) UpdateInfoById(ctx context.Context, id primitive.O
 	if updateField.AdminScopeUserIds != nil {
 		data["admin_scope_user_ids"] = updateField.AdminScopeUserIds
 	}
+	if updateField.AdminScopeAccounts != nil {
+		data["admin_scope_accounts"] = updateField.AdminScopeAccounts
+	}
+	if updateField.AdminPagePermissions != nil {
+		data["admin_page_permissions"] = updateField.AdminPagePermissions
+	}
 	return mongoutil.UpdateOne(ctx, o.Collection, bson.M{"_id": id}, bson.M{"$set": data}, false)
 }
 
-func (o *OrganizationUserDao) UpdateAdminScopeUserIds(ctx context.Context, orgId primitive.ObjectID, userId string, scopeUserIds []string) error {
+func (o *OrganizationUserDao) UpdateAdminScopeUserIds(ctx context.Context, orgId primitive.ObjectID, userId string, scopeUserIds []string, scopeAccounts []string) error {
 	return mongoutil.UpdateOne(ctx, o.Collection, bson.M{
 		"organization_id": orgId,
 		"user_id":         userId,
 	}, bson.M{"$set": bson.M{
 		"admin_scope_user_ids": scopeUserIds,
+		"admin_scope_accounts": scopeAccounts,
 		"updated_at":           time.Now().UTC(),
+	}}, false)
+}
+
+func (o *OrganizationUserDao) UpdateAdminPagePermissions(ctx context.Context, orgId primitive.ObjectID, userId string, permissions []string) error {
+	return mongoutil.UpdateOne(ctx, o.Collection, bson.M{
+		"organization_id": orgId,
+		"user_id":         userId,
+	}, bson.M{"$set": bson.M{
+		"admin_page_permissions": permissions,
+		"updated_at":             time.Now().UTC(),
 	}}, false)
 }
 

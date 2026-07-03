@@ -757,6 +757,44 @@ func (w *OrganizationUserCtl) PostUpdateAdminDataScope(c *gin.Context) {
 	apiresp.GinSuccess(c, map[string]interface{}{})
 }
 
+func (w *OrganizationUserCtl) PostUpdateAdminPagePermission(c *gin.Context) {
+	data := svc.UpdateAdminPagePermissionReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	if err := orgUserSvc.UpdateAdminPagePermission(c, org.ID, data); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
+func (w *OrganizationUserCtl) GetAdminPermission(c *gin.Context) {
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	resp, err := svc.NewOrganizationUserService().GetAdminPermission(org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, resp)
+}
+
 // PostOrgUserWalletSnapshot 批量获取本组织用户钱包/补偿金（与 post_org_user omit_wallet 配套）
 func (w *OrganizationUserCtl) PostOrgUserWalletSnapshot(c *gin.Context) {
 	var req dto.OrgUserWalletSnapshotReq
