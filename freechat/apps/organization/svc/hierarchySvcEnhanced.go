@@ -72,6 +72,11 @@ func (s *HierarchyService) searchHierarchyWithAggregation(ctx context.Context, o
 			"$ne": chat.OrganizationUserTypeOrganization,
 		}
 	}
+	if len(req.ScopeUserIDs) > 0 {
+		match["user_id"] = bson.M{"$in": req.ScopeUserIDs}
+	} else if req.ScopeRootUserIDs != nil {
+		match["user_id"] = bson.M{"$in": []string{}}
+	}
 
 	// 层级过滤
 	if req.Level > 0 {
@@ -83,11 +88,19 @@ func (s *HierarchyService) searchHierarchyWithAggregation(ctx context.Context, o
 		// 组织根节点：level=1
 		if len(req.AncestorID) >= len(OrgRootNodePrefix) && req.AncestorID[:len(OrgRootNodePrefix)] == OrgRootNodePrefix {
 			match["level"] = 1
+			if len(req.ScopeRootUserIDs) > 0 {
+				delete(match, "level")
+				match["user_id"] = bson.M{"$in": req.ScopeRootUserIDs}
+			}
 		} else {
 			ancestor, err := s.getUserByID(ctx, organizationID, req.AncestorID)
 			if err == nil && ancestor.UserType == chat.OrganizationUserTypeOrganization {
 				// 上级是组织节点，同样视为根，level=1
 				match["level"] = 1
+				if len(req.ScopeRootUserIDs) > 0 {
+					delete(match, "level")
+					match["user_id"] = bson.M{"$in": req.ScopeRootUserIDs}
+				}
 			} else {
 				// 普通用户上级，根据 ancestor_path 精确匹配
 				match["ancestor_path"] = req.AncestorID

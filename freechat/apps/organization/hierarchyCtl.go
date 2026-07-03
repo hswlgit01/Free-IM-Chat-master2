@@ -3,7 +3,6 @@
 package organization
 
 import (
-	"context"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,9 +47,14 @@ func (h *HierarchyCtl) GetHierarchyTree(c *gin.Context) {
 
 	// Create hierarchy service
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
 
 	// Get hierarchy tree
-	resp, err := hierarchySvc.GetHierarchyTree(context.Background(), org.ID, rootUserID, maxDepth)
+	resp, err := hierarchySvc.GetHierarchyTree(c, org.ID, rootUserID, maxDepth, scope)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -69,7 +73,12 @@ func (h *HierarchyCtl) GetHierarchyTreeRootSummary(c *gin.Context) {
 	}
 
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
-	resp, err := hierarchySvc.GetHierarchyTreeRootSummary(context.Background(), org.ID)
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	resp, err := hierarchySvc.GetHierarchyTreeRootSummary(c, org.ID, scope)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -103,9 +112,14 @@ func (h *HierarchyCtl) GetHierarchyChildren(c *gin.Context) {
 
 	// Create hierarchy service
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
 
 	// Get children
-	resp, err := hierarchySvc.GetHierarchyChildren(context.Background(), org.ID, parentUserID, pagination)
+	resp, err := hierarchySvc.GetHierarchyChildren(c, org.ID, parentUserID, pagination, scope)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -133,9 +147,14 @@ func (h *HierarchyCtl) GetHierarchyDetail(c *gin.Context) {
 
 	// Create hierarchy service
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
 
 	// Get user hierarchy detail
-	resp, err := hierarchySvc.GetHierarchyDetail(context.Background(), org.ID, userID)
+	resp, err := hierarchySvc.GetHierarchyDetail(c, org.ID, userID, scope)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -179,6 +198,15 @@ func (h *HierarchyCtl) SearchHierarchy(c *gin.Context) {
 
 	// Create hierarchy service
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	if scope != nil {
+		req.ScopeRootUserIDs = scope.RootUserIDs()
+		req.ScopeUserIDs = scope.UserIDs()
+	}
 
 	// 使用增强版搜索函数，支持搜索账号和昵称
 	// 注意：这里使用SearchHierarchyEnhanced替代原来的SearchHierarchy
@@ -213,6 +241,15 @@ func (h *HierarchyCtl) SearchHierarchyPanel(c *gin.Context) {
 	}
 
 	hierarchySvc := svc.NewHierarchyService(plugin.MongoCli().GetDB())
+	scope, err := hierarchySvc.ResolveAdminScope(c, org.ID, org.OrgUser)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	if scope != nil {
+		req.ScopeRootUserIDs = scope.RootUserIDs()
+		req.ScopeUserIDs = scope.UserIDs()
+	}
 	resp, err := hierarchySvc.SearchHierarchyPanel(c, org.ID, &req)
 	if err != nil {
 		log.ZError(c, "search_panel 失败", err, "keyword", req.Keyword)

@@ -70,14 +70,16 @@ type HierarchyChildrenResp struct {
 
 // SearchHierarchyReq represents the request for searching users in the hierarchy
 type SearchHierarchyReq struct {
-	Keyword         string `json:"keyword"`
-	Level           int    `json:"level"`
-	AncestorID      string `json:"ancestor_id"`
-	Page            int    `json:"page"`
-	PageSize        int    `json:"page_size"`
-	SortByField     string `json:"sort_by_field"`
-	SortOrder       string `json:"sort_order"`
-	IncludeOrgNodes bool   `json:"include_org_nodes"` // 是否包含组织虚拟节点
+	Keyword          string   `json:"keyword"`
+	Level            int      `json:"level"`
+	AncestorID       string   `json:"ancestor_id"`
+	Page             int      `json:"page"`
+	PageSize         int      `json:"page_size"`
+	SortByField      string   `json:"sort_by_field"`
+	SortOrder        string   `json:"sort_order"`
+	IncludeOrgNodes  bool     `json:"include_org_nodes"` // 是否包含组织虚拟节点
+	ScopeRootUserIDs []string `json:"-"`
+	ScopeUserIDs     []string `json:"-"`
 }
 
 // SearchHierarchyResp represents the response for searching users in the hierarchy

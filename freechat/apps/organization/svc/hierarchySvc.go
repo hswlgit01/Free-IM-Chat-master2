@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/openimsdk/chat/freechat/apps/organization/dto"
+	orgModel "github.com/openimsdk/chat/freechat/apps/organization/model"
 	"github.com/openimsdk/chat/freechat/utils/paginationUtils"
 	"github.com/openimsdk/chat/pkg/common/db/table/chat"
 	"github.com/openimsdk/tools/log"
@@ -22,11 +23,81 @@ type HierarchyService struct {
 	db *mongo.Database
 }
 
+type hierarchyAdminScope struct {
+	rootUserIDs []string
+	userIDs     []string
+	userIDSet   map[string]struct{}
+}
+
+func (s *hierarchyAdminScope) RootUserIDs() []string {
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s.rootUserIDs...)
+}
+
+func (s *hierarchyAdminScope) UserIDs() []string {
+	if s == nil {
+		return nil
+	}
+	return append([]string(nil), s.userIDs...)
+}
+
 // NewHierarchyService creates a new hierarchy service instance
 func NewHierarchyService(db *mongo.Database) *HierarchyService {
 	return &HierarchyService{
 		db: db,
 	}
+}
+
+func (s *HierarchyService) ResolveAdminScope(ctx context.Context, organizationID primitive.ObjectID, operator *orgModel.OrganizationUser) (*hierarchyAdminScope, error) {
+	if operator == nil ||
+		operator.Role == orgModel.OrganizationUserSuperAdminRole ||
+		len(operator.AdminScopeUserIds) == 0 {
+		return nil, nil
+	}
+	orgUserDao := orgModel.NewOrganizationUserDao(s.db)
+	userIDs, err := orgUserDao.ListScopedUserIDs(ctx, organizationID, operator.AdminScopeUserIds)
+	if err != nil {
+		return nil, err
+	}
+	scope := &hierarchyAdminScope{
+		rootUserIDs: operator.AdminScopeUserIds,
+		userIDs:     userIDs,
+		userIDSet:   make(map[string]struct{}, len(userIDs)),
+	}
+	for _, userID := range userIDs {
+		if userID != "" {
+			scope.userIDSet[userID] = struct{}{}
+		}
+	}
+	return scope, nil
+}
+
+func (s *HierarchyService) applyScopeFilter(filter bson.M, scope *hierarchyAdminScope) {
+	if scope == nil {
+		return
+	}
+	if len(scope.userIDs) == 0 {
+		filter["user_id"] = bson.M{"$in": []string{}}
+		return
+	}
+	if existing, ok := filter["user_id"]; ok {
+		if cond, ok := existing.(bson.M); ok {
+			cond["$in"] = scope.userIDs
+			filter["user_id"] = cond
+			return
+		}
+	}
+	filter["user_id"] = bson.M{"$in": scope.userIDs}
+}
+
+func (s *HierarchyService) scopeContains(scope *hierarchyAdminScope, userID string) bool {
+	if scope == nil {
+		return true
+	}
+	_, ok := scope.userIDSet[userID]
+	return ok
 }
 
 // attachForbiddenImNin 在层级列表查询中排除 forbidden_account / 超管封禁中的 IM 账号（与 search_panel、effectiveStats 口径一致）。
@@ -107,7 +178,7 @@ func (s *HierarchyService) applyHierarchyVisibilityFilter(filter bson.M, st *hie
 }
 
 // GetHierarchyTree returns a tree structure of users based on their hierarchy relationships
-func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID primitive.ObjectID, rootUserID string, maxDepth int) (*dto.HierarchyTreeResp, error) {
+func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID primitive.ObjectID, rootUserID string, maxDepth int, scope *hierarchyAdminScope) (*dto.HierarchyTreeResp, error) {
 	var rootUser *chat.OrganizationUser
 	var err error
 
@@ -125,6 +196,9 @@ func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID 
 		rootUser, err = s.getUserByID(ctx, organizationID, rootUserID)
 		if err != nil {
 			return nil, err
+		}
+		if !s.scopeContains(scope, rootUser.UserId) {
+			return &dto.HierarchyTreeResp{Root: nil}, nil
 		}
 	}
 
@@ -148,7 +222,7 @@ func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID 
 	// If maxDepth is 0 or positive, build the tree recursively
 	if maxDepth != 0 {
 		forbiddenIm := s.mergeForbiddenImServerUserIDs(ctx)
-		err = s.buildTreeRecursively(ctx, organizationID, rootNode, maxDepth, 1, forbiddenIm, st)
+		err = s.buildTreeRecursively(ctx, organizationID, rootNode, maxDepth, 1, forbiddenIm, st, scope)
 		if err != nil {
 			return nil, err
 		}
@@ -156,6 +230,11 @@ func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID 
 
 	if st != nil {
 		st.applyTreeRecursive(rootNode)
+	}
+	if scope != nil && rootNode.UserType == string(chat.OrganizationUserTypeOrganization) {
+		rootNode.TeamSize = len(scope.userIDs)
+		rootNode.DirectDownlineCount = len(scope.rootUserIDs)
+		rootNode.HasMoreChildren = len(scope.rootUserIDs) > 0
 	}
 
 	return &dto.HierarchyTreeResp{
@@ -165,7 +244,7 @@ func (s *HierarchyService) GetHierarchyTree(ctx context.Context, organizationID 
 
 // GetHierarchyTreeRootSummary 仅返回组织虚拟根节点摘要（与完整 tree 中 root 字段结构一致），
 // 不递归子节点、不做全量有效人数重算（team_size/direct_downline_count 直接来自 organization_user 文档）。
-func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, organizationID primitive.ObjectID) (*dto.HierarchyTreeResp, error) {
+func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, organizationID primitive.ObjectID, scope *hierarchyAdminScope) (*dto.HierarchyTreeResp, error) {
 	rootUser, err := s.getOrCreateOrgRootNode(ctx, organizationID)
 	if err != nil {
 		return nil, err
@@ -178,6 +257,10 @@ func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, orga
 	childFilter := bson.M{
 		"organization_id": organizationID,
 		"level":           1,
+	}
+	if scope != nil {
+		delete(childFilter, "level")
+		childFilter["user_id"] = bson.M{"$in": scope.rootUserIDs}
 	}
 	s.applyHierarchyVisibilityFilter(childFilter, st, s.mergeForbiddenImServerUserIDs(ctx))
 	childCount, err := collection.CountDocuments(ctx, childFilter)
@@ -202,12 +285,17 @@ func (s *HierarchyService) GetHierarchyTreeRootSummary(ctx context.Context, orga
 		childCount = int64(st.directDownlineCountFor(rootUser.UserId))
 		rootNode.HasMoreChildren = childCount > 0
 	}
+	if scope != nil {
+		rootNode.TeamSize = len(scope.userIDs)
+		rootNode.DirectDownlineCount = len(scope.rootUserIDs)
+		rootNode.HasMoreChildren = len(scope.rootUserIDs) > 0
+	}
 
 	return &dto.HierarchyTreeResp{Root: rootNode}, nil
 }
 
 // buildTreeRecursively builds the hierarchy tree recursively
-func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizationID primitive.ObjectID, node *dto.HierarchyTreeNode, maxDepth, currentDepth int, forbiddenIm map[string]struct{}, st *hierarchyEffectiveStats) error {
+func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizationID primitive.ObjectID, node *dto.HierarchyTreeNode, maxDepth, currentDepth int, forbiddenIm map[string]struct{}, st *hierarchyEffectiveStats, scope *hierarchyAdminScope) error {
 	// 检查是否是组织根节点（检查UserType字段和OrgRootNode前缀）
 	isOrgRootNode := node.UserType == string(chat.OrganizationUserTypeOrganization) ||
 		(len(node.UserID) >= len(OrgRootNodePrefix) && node.UserID[:len(OrgRootNodePrefix)] == OrgRootNodePrefix)
@@ -220,9 +308,14 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 	if isOrgRootNode {
 		// 对于组织根节点，查找所有level=1的用户
 		filter["level"] = 1
+		if scope != nil {
+			delete(filter, "level")
+			filter["user_id"] = bson.M{"$in": scope.rootUserIDs}
+		}
 	} else {
 		// 对于普通用户节点，查找所有level1_parent=node.UserID的用户
 		filter["level1_parent"] = node.UserID
+		s.applyScopeFilter(filter, scope)
 	}
 	s.applyHierarchyVisibilityFilter(filter, st, forbiddenIm)
 
@@ -277,7 +370,7 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 		}
 
 		// 递归构建子节点的子树
-		err = s.buildTreeRecursively(ctx, organizationID, childNode, maxDepth, currentDepth+1, forbiddenIm, st)
+		err = s.buildTreeRecursively(ctx, organizationID, childNode, maxDepth, currentDepth+1, forbiddenIm, st, scope)
 		if err != nil {
 			return err
 		}
@@ -290,7 +383,7 @@ func (s *HierarchyService) buildTreeRecursively(ctx context.Context, organizatio
 }
 
 // GetHierarchyChildren returns the direct children of a user in the hierarchy
-func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizationID primitive.ObjectID, parentUserID string, pagination *paginationUtils.DepPagination) (*dto.HierarchyChildrenResp, error) {
+func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizationID primitive.ObjectID, parentUserID string, pagination *paginationUtils.DepPagination, scope *hierarchyAdminScope) (*dto.HierarchyChildrenResp, error) {
 	// 检查是否是组织根节点
 	isOrgRootNode := false
 	if parentUserID != "" {
@@ -313,9 +406,20 @@ func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizatio
 	if isOrgRootNode {
 		// 对于组织根节点，查询level=1的用户
 		filter["level"] = 1
+		if scope != nil {
+			delete(filter, "level")
+			filter["user_id"] = bson.M{"$in": scope.rootUserIDs}
+		}
 	} else {
+		if !s.scopeContains(scope, parentUserID) {
+			return &dto.HierarchyChildrenResp{
+				Children: []dto.UserHierarchyInfo{},
+				Total:    0,
+			}, nil
+		}
 		// 对于普通用户，查询直接下级
 		filter["level1_parent"] = parentUserID
+		s.applyScopeFilter(filter, scope)
 	}
 	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
 	forbiddenIm := s.mergeForbiddenImServerUserIDs(ctx)
@@ -506,11 +610,14 @@ func (s *HierarchyService) GetHierarchyChildren(ctx context.Context, organizatio
 }
 
 // GetHierarchyDetail returns detailed information about a user in the hierarchy
-func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationID primitive.ObjectID, userID string) (*dto.HierarchyDetailResp, error) {
+func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationID primitive.ObjectID, userID string, scope *hierarchyAdminScope) (*dto.HierarchyDetailResp, error) {
 	// 查找用户
 	user, err := s.getUserByID(ctx, organizationID, userID)
 	if err != nil {
 		return nil, err
+	}
+	if !s.scopeContains(scope, user.UserId) {
+		return nil, errors.New("user is outside data scope")
 	}
 
 	// 创建响应对象，使用新的getUserInfo函数获取分离的账号、昵称和头像
@@ -741,6 +848,7 @@ func (s *HierarchyService) GetHierarchyDetail(ctx context.Context, organizationI
 	}
 	st := s.tryHierarchyEffectiveStats(ctx, organizationID)
 	s.applyHierarchyVisibilityFilter(filter, st, s.mergeForbiddenImServerUserIDs(ctx))
+	s.applyScopeFilter(filter, scope)
 
 	// 限制返回10个直接下级用户
 	collection := s.db.Collection("organization_user")
@@ -804,6 +912,11 @@ func (s *HierarchyService) SearchHierarchy(ctx context.Context, organizationID p
 			"$ne": chat.OrganizationUserTypeOrganization,
 		}
 	}
+	if len(req.ScopeUserIDs) > 0 {
+		filter["user_id"] = bson.M{"$in": req.ScopeUserIDs}
+	} else if req.ScopeRootUserIDs != nil {
+		filter["user_id"] = bson.M{"$in": []string{}}
+	}
 
 	// 添加关键词搜索
 	if req.Keyword != "" {
@@ -824,11 +937,19 @@ func (s *HierarchyService) SearchHierarchy(ctx context.Context, organizationID p
 		// 如果是组织根节点ID，则搜索所有level=1的用户
 		if len(req.AncestorID) >= len(OrgRootNodePrefix) && req.AncestorID[:len(OrgRootNodePrefix)] == OrgRootNodePrefix {
 			filter["level"] = 1
+			if len(req.ScopeRootUserIDs) > 0 {
+				delete(filter, "level")
+				filter["user_id"] = bson.M{"$in": req.ScopeRootUserIDs}
+			}
 		} else {
 			// 检查指定的上级是否是组织节点
 			ancestor, err := s.getUserByID(ctx, organizationID, req.AncestorID)
 			if err == nil && ancestor.UserType == chat.OrganizationUserTypeOrganization {
 				filter["level"] = 1
+				if len(req.ScopeRootUserIDs) > 0 {
+					delete(filter, "level")
+					filter["user_id"] = bson.M{"$in": req.ScopeRootUserIDs}
+				}
 			} else {
 				// 普通用户上级，使用ancestor_path
 				filter["ancestor_path"] = req.AncestorID
