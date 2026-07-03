@@ -53,6 +53,14 @@ func NewUserSvc() *UserSvc {
 	return &UserSvc{}
 }
 
+// ReportOperation dawn 2026-07-04 最近操作时间：客户端每次打开 APP 上报，记录当前用户(chat user_id)的最近操作时间。
+func (w *UserSvc) ReportOperation(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+	return chatModel.NewUserOperationTimeDao(plugin.MongoCli().GetDB()).Upsert(ctx, userID)
+}
+
 const registrationFriendGreeting = "你们已经成为好友，打个招呼吧～"
 const registrationFriendSenderFallback = "好友"
 
@@ -200,6 +208,8 @@ type UserFullInfo struct {
 	IsRealNameVerified bool   `json:"isRealNameVerified"` // 是否已实名认证
 	RealName           string `json:"realName,omitempty"` // 真实姓名
 	LastLoginTime      int64  `json:"last_login_time,omitempty"`
+	// dawn 2026-07-04 最近一次操作时间(客户端每次打开 APP 上报)，用于用户查询/私聊页展示。
+	LastOperationTime int64 `json:"last_operation_time,omitempty"`
 }
 
 // BatchForceLogoutReq 批量强制下线请求
@@ -832,6 +842,16 @@ func (w *UserSvc) FindUserFullInfo(ctx context.Context, req *FindUserFullInfoReq
 		userIDToLastLoginTimeMap[record.UserID] = record.LoginTime.UnixMilli()
 	}
 
+	// dawn 2026-07-04 最近一次操作时间：按 chat user_id 批量取，并入用户信息返回。
+	userIDToLastOperationTimeMap := make(map[string]int64)
+	if opRecords, e := chatModel.NewUserOperationTimeDao(db).FindByUserIDs(ctx, userIDs); e == nil {
+		for _, r := range opRecords {
+			if r != nil && r.UserID != "" && !r.OperationTime.IsZero() {
+				userIDToLastOperationTimeMap[r.UserID] = r.OperationTime.UnixMilli()
+			}
+		}
+	}
+
 	// 预分配切片容量
 	users := make([]*UserFullInfo, 0, len(req.UserIDs))
 
@@ -874,8 +894,9 @@ func (w *UserSvc) FindUserFullInfo(ctx context.Context, req *FindUserFullInfoReq
 			GlobalRecvMsgOpt: attr.GlobalRecvMsgOpt,
 			RegisterType:     attr.RegisterType,
 			OrgRole:          imUserToRoleMap[imUserID],           // 组织角色
-			InvitationCode:   imUserToInvitationCodeMap[imUserID], // 邀请码
-			LastLoginTime:    userIDToLastLoginTimeMap[userID],
+			InvitationCode:    imUserToInvitationCodeMap[imUserID], // 邀请码
+			LastLoginTime:     userIDToLastLoginTimeMap[userID],
+			LastOperationTime: userIDToLastOperationTimeMap[userID],
 		}
 
 		// 如果有 IM 用户信息，使用 IM 用户的昵称和头像

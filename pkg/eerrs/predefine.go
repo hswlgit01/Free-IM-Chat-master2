@@ -31,6 +31,8 @@ var (
 	ErrForbidden                = errs.NewCodeError(20012, "Forbidden")
 	ErrRefuseFriend             = errs.NewCodeError(20013, "RefuseFriend")
 	ErrEmailAlreadyRegister     = errs.NewCodeError(20014, "EmailAlreadyRegister")
+	// dawn 2026-07-04 登录密码错误频率限制：每分钟密码错误超过 5 次
+	ErrLoginPwdTooFrequent = errs.NewCodeError(20015, "操作太频繁，请稍后再试")
 
 	ErrTokenNotExist = errs.NewCodeError(20101, "ErrTokenNotExist")
 )

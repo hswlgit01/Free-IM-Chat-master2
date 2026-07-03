@@ -298,6 +298,7 @@ func registerDepRouter(router *gin.Engine) {
 		accountApi.POST("/find/full", chatMiddleware.CheckToken, userCtl.FindUserFullInfo)              // 根据ImUserId查询用户完整信息
 		accountApi.POST("/search/full", chatMiddleware.CheckToken, userCtl.SearchUserFullInfo)          // 搜索用户完整信息（头像昵称从IM表获取）
 		accountApi.POST("/change_email", chatMiddleware.CheckToken, userCtl.ChangeEmail)                // 修改用户邮箱
+		accountApi.POST("/report_operation", chatMiddleware.CheckToken, userCtl.ReportOperation)        // dawn 2026-07-04 最近操作时间：客户端打开APP上报
 		accountApi.POST("/login_record", chatMiddleware.CheckToken, userCtl.GetLoginRecordByImServerId) // 根据IMServerID查询用户登录记录
 	}
 

@@ -536,9 +536,19 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 		if err != nil {
 			return nil, fmt.Errorf("failed to TakeAccount %s", err)
 		}
+		// dawn 2026-07-04 登录密码错误频率限制：每分钟密码错误次数≥5次 → 操作太频繁，请稍后再试。
+		// 固定 1 分钟窗口计数：校验前若已达 5 次直接拦；密码错误则计数(首次置 60s TTL)；密码正确清零。
+		pwdErrKey := fmt.Sprintf("chat:login_pwd_err:{%s}", credential.UserID)
+		if cur, _ := o.redisCli.Get(ctx, pwdErrKey).Int(); cur >= 5 {
+			return nil, eerrs.ErrLoginPwdTooFrequent.Wrap()
+		}
 		if account.Password != req.Password {
+			if n, e := o.redisCli.Incr(ctx, pwdErrKey).Result(); e == nil && n == 1 {
+				o.redisCli.Expire(ctx, pwdErrKey, time.Minute)
+			}
 			return nil, eerrs.ErrPassword.Wrap()
 		}
+		o.redisCli.Del(ctx, pwdErrKey)
 	}
 	chatToken, err := o.Admin.CreateToken(ctx, credential.UserID, constant.NormalUser)
 	if err != nil {

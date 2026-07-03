@@ -182,6 +182,20 @@ func (w *UserCtl) ChangeEmail(c *gin.Context) {
 	apiresp.GinSuccess(c, "success")
 }
 
+// ReportOperation dawn 2026-07-04 最近操作时间：客户端每次打开 APP 调用，上报当前操作时间。
+func (w *UserCtl) ReportOperation(c *gin.Context) {
+	userID := mctx.GetOpUserID(c)
+	if userID == "" {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+	if err := svc.NewUserSvc().ReportOperation(c, userID); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiresp.GinSuccess(c, "success")
+}
+
 // 拉黑用户
 func (w *UserCtl) BlackUser(c *gin.Context) {
 	data := admin.BlockUserReq{}
