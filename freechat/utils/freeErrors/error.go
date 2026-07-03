@@ -67,6 +67,7 @@ const (
 	UserPwdErrCode     = 11004
 	ErrEmailInUse      = 11005 // 邮箱已被使用
 	ErrAccountExists   = 11006 // 账户已存在
+	ErrRemoteLoginCity = 11007 // 异地登录限制：登录城市与账号绑定城市不一致
 
 	// livestream errors: 11500-12000
 	ErrLiveStreamRoomNotFound                     = 11501 // 直播间不存在
@@ -105,6 +106,14 @@ var (
 			msg = "Access forbidden!"
 		}
 		return errs.NewCodeError(ErrForbidden, msg)
+	}
+
+	// dawn 2026-07-03 异地登录限制错误
+	RemoteLoginCityErr = func(msg string) error {
+		if msg == "" {
+			msg = "异地登录已被限制"
+		}
+		return errs.NewCodeError(ErrRemoteLoginCity, msg)
 	}
 
 	NotFoundErr             = errs.NewCodeError(ErrNotFoundCode, "Resource not found")

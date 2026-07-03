@@ -658,6 +658,29 @@ func (w *OrganizationUserCtl) PostUpdateUserStatus(c *gin.Context) {
 	apiresp.GinSuccess(c, map[string]interface{}{})
 }
 
+// dawn 2026-07-03 异地登录限制：后台清除组织用户的登录城市绑定。
+func (w *OrganizationUserCtl) PostClearOrgUserLoginCity(c *gin.Context) {
+	data := svc.ClearOrgUserLoginCityReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	if err := orgUserSvc.ClearOrgUserLoginCity(c, org.ID, data); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
 func (w *OrganizationUserCtl) PostChangeOrgUser(c *gin.Context) {
 	data := svc.ChangeOrgUserReq{}
 	if err := c.ShouldBind(&data); err != nil {

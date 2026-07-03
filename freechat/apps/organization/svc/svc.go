@@ -2084,6 +2084,23 @@ func (w *OrganizationUserSvc) UpdateUserStatus(orgId primitive.ObjectID, params 
 	return errs.Unwrap(err)
 }
 
+// dawn 2026-07-03 异地登录限制：后台清除某组织用户的登录城市绑定，清除后其下次登录以新城市重新绑定。
+type ClearOrgUserLoginCityReq struct {
+	UserId string `json:"user_id"`
+}
+
+func (w *OrganizationUserSvc) ClearOrgUserLoginCity(ctx context.Context, orgId primitive.ObjectID, params ClearOrgUserLoginCityReq) error {
+	db := plugin.MongoCli().GetDB()
+	orgUser, err := model.NewOrganizationUserDao(db).GetByUserIdAndOrgId(ctx, params.UserId, orgId)
+	if err != nil {
+		return errs.Unwrap(err)
+	}
+	if orgUser.ImServerUserId == "" {
+		return nil
+	}
+	return chatModel.NewUserLoginCityDao(db).DeleteByUserID(ctx, orgUser.ImServerUserId)
+}
+
 func (w *OrganizationUserSvc) GetUserAllOrg(keyword string, userIds []string) (*paginationUtils.ListResp[*dto.OrgUserWithOrgResp], error) {
 	mongoCli := plugin.MongoCli()
 	db := mongoCli.GetDB()

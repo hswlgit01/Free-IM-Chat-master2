@@ -692,6 +692,7 @@ func registerDepAdminRouter(router *gin.Engine) {
 		orgUserApi.POST("/update_can_send_free_msg", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserCanSendFreeMsg)      // 更新用户是否可自由发送消息
 		orgUserApi.POST("/reset_password", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostResetOrgUserPassword)                    // 组织后台重置组织用户密码
 		orgUserApi.POST("/update_nickname", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateOrgUserNickname)                  // 组织后台修改组织用户昵称
+		orgUserApi.POST("/clear_login_city", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostClearOrgUserLoginCity)                 // dawn 2026-07-03 异地登录：清除组织用户登录城市绑定
 	}
 
 	// 用户标签管理路由 - 集成到组织用户控制器中
