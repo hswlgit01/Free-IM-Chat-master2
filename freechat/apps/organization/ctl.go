@@ -726,13 +726,35 @@ func (w *OrganizationUserCtl) PostGetOrgUser(c *gin.Context) {
 	}
 
 	orgUserSvc := svc.NewOrganizationUserService()
-	resp, err := orgUserSvc.GetOrgUserWithFilters(org.ID, &req, page)
+	resp, err := orgUserSvc.GetOrgUserWithFilters(org.ID, org.OrgUser, &req, page)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
 	}
 
 	apiresp.GinSuccess(c, resp)
+}
+
+func (w *OrganizationUserCtl) PostUpdateAdminDataScope(c *gin.Context) {
+	data := svc.UpdateAdminDataScopeReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	if err := orgUserSvc.UpdateAdminDataScope(c, org.ID, data); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
 }
 
 // PostOrgUserWalletSnapshot 批量获取本组织用户钱包/补偿金（与 post_org_user omit_wallet 配套）

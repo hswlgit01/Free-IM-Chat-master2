@@ -99,6 +99,10 @@ type OrganizationUser struct {
 	TeamSize            int      `bson:"team_size" json:"team_size"`
 	DirectDownlineCount int      `bson:"direct_downline_count" json:"direct_downline_count"`
 
+	// 后台管理员数据范围：绑定业务员/用户 user_id 后，只能查看这些账号及其下级链路数据。
+	// 空数组表示不限制；SuperAdmin 始终不受该字段限制。
+	AdminScopeUserIds []string `bson:"admin_scope_user_ids,omitempty" json:"admin_scope_user_ids,omitempty"`
+
 	Tags      []primitive.ObjectID `bson:"tags,omitempty" json:"tags,omitempty"` // 用户标签ID数组
 	Points    int64                `bson:"points" json:"points"`
 	CreatedAt time.Time            `bson:"created_at" json:"created_at"`
@@ -394,8 +398,9 @@ func (o *OrganizationUserDao) GetByIMServerUserIds(ctx context.Context, imServer
 }
 
 type UpdateInfoByIdField struct {
-	Role   OrganizationUserRole
-	Status OrganizationUserStatus
+	Role              OrganizationUserRole
+	Status            OrganizationUserStatus
+	AdminScopeUserIds []string
 }
 
 func (o *OrganizationUserDao) UpdateInfoById(ctx context.Context, id primitive.ObjectID, updateField UpdateInfoByIdField) error {
@@ -404,7 +409,54 @@ func (o *OrganizationUserDao) UpdateInfoById(ctx context.Context, id primitive.O
 		"status":     updateField.Status,
 		"updated_at": time.Now().UTC(),
 	}
+	if updateField.AdminScopeUserIds != nil {
+		data["admin_scope_user_ids"] = updateField.AdminScopeUserIds
+	}
 	return mongoutil.UpdateOne(ctx, o.Collection, bson.M{"_id": id}, bson.M{"$set": data}, false)
+}
+
+func (o *OrganizationUserDao) UpdateAdminScopeUserIds(ctx context.Context, orgId primitive.ObjectID, userId string, scopeUserIds []string) error {
+	return mongoutil.UpdateOne(ctx, o.Collection, bson.M{
+		"organization_id": orgId,
+		"user_id":         userId,
+	}, bson.M{"$set": bson.M{
+		"admin_scope_user_ids": scopeUserIds,
+		"updated_at":           time.Now().UTC(),
+	}}, false)
+}
+
+func (o *OrganizationUserDao) ListScopedUserIDs(ctx context.Context, organizationId primitive.ObjectID, rootUserIDs []string) ([]string, error) {
+	if len(rootUserIDs) == 0 {
+		return nil, nil
+	}
+	filter := bson.M{
+		"organization_id": organizationId,
+		"$or": []bson.M{
+			{"user_id": bson.M{"$in": rootUserIDs}},
+			{"inviter": bson.M{"$in": rootUserIDs}},
+			{"level1_parent": bson.M{"$in": rootUserIDs}},
+			{"level2_parent": bson.M{"$in": rootUserIDs}},
+			{"level3_parent": bson.M{"$in": rootUserIDs}},
+			{"ancestor_path": bson.M{"$in": rootUserIDs}},
+		},
+	}
+	users, err := mongoutil.Find[*OrganizationUser](ctx, o.Collection, filter)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(users))
+	seen := make(map[string]struct{}, len(users))
+	for _, user := range users {
+		if user == nil || user.UserId == "" {
+			continue
+		}
+		if _, ok := seen[user.UserId]; ok {
+			continue
+		}
+		seen[user.UserId] = struct{}{}
+		ids = append(ids, user.UserId)
+	}
+	return ids, nil
 }
 
 // AddPointsByImServerUserId 根据 IM 服务器用户ID增加积分

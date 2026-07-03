@@ -1500,16 +1500,40 @@ func NewOrganizationUserService() *OrganizationUserSvc {
 }
 
 type CreateOrganizationBackendAdminReq struct {
-	Nickname string `json:"nickname"  binding:"required"`
-	FaceURL  string `json:"faceURL"`
-	Birth    int64  `json:"birth"`
-	Gender   int32  `json:"gender"`
-	Account  string `json:"account" binding:"required"`
-	Password string `json:"password"  binding:"required"`
+	Nickname          string   `json:"nickname"  binding:"required"`
+	FaceURL           string   `json:"faceURL"`
+	Birth             int64    `json:"birth"`
+	Gender            int32    `json:"gender"`
+	Account           string   `json:"account" binding:"required"`
+	Password          string   `json:"password"  binding:"required"`
+	AdminScopeUserIds []string `json:"admin_scope_user_ids"`
+}
+
+type UpdateAdminDataScopeReq struct {
+	UserId             string   `json:"user_id" binding:"required"`
+	AdminScopeUserIds  []string `json:"admin_scope_user_ids"`
+	AdminScopeAccounts []string `json:"admin_scope_accounts"`
+}
+
+func distinctNonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 type ResetOrganizationUserPasswordReq struct {
-	UserID      string `json:"userID" binding:"required"`
+	UserID string `json:"userID" binding:"required"`
 	// dawn 2026-06-23 修复重置密码报"无效的参数"：newPassword 改为可选(为空则后端回退默认 123456)，避免前端"重置为默认"未传该字段时 bind 失败。
 	NewPassword string `json:"newPassword"`
 }
@@ -1592,12 +1616,13 @@ func (w *OrganizationUserSvc) CreateOrganizationBackendAdmin(operatorId string, 
 		}
 
 		orgUser := &model.OrganizationUser{
-			OrganizationId: organization.ID,
-			UserId:         newUserID,
-			Role:           model.OrganizationUserBackendAdminRole,
-			Status:         model.OrganizationUserEnableStatus,
-			RegisterType:   model.OrganizationUserRegisterTypeBackend,
-			ImServerUserId: newImServerUserID,
+			OrganizationId:    organization.ID,
+			UserId:            newUserID,
+			Role:              model.OrganizationUserBackendAdminRole,
+			Status:            model.OrganizationUserEnableStatus,
+			RegisterType:      model.OrganizationUserRegisterTypeBackend,
+			ImServerUserId:    newImServerUserID,
+			AdminScopeUserIds: distinctNonEmptyStrings(params.AdminScopeUserIds),
 		}
 		if err := orgUserDao.Create(sessionCtx, orgUser); err != nil {
 			return err
@@ -1913,6 +1938,50 @@ func (w *OrganizationUserSvc) UpdateUserCanSendFreeMsg(ctx context.Context, oper
 	return errs.Unwrap(err)
 }
 
+func (w *OrganizationUserSvc) UpdateAdminDataScope(ctx context.Context, orgId primitive.ObjectID, params UpdateAdminDataScopeReq) error {
+	db := plugin.MongoCli().GetDB()
+	orgUserDao := model.NewOrganizationUserDao(db)
+	attributeDao := chatModel.NewAttributeDao(db)
+
+	target, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserId, orgId)
+	if err != nil {
+		return err
+	}
+	if target.Role != model.OrganizationUserBackendAdminRole &&
+		target.Role != model.OrganizationUserSuperAdminRole {
+		return freeErrors.ForbiddenErr("data scope can only be configured for backend admins")
+	}
+
+	scopeUserIDs := distinctNonEmptyStrings(params.AdminScopeUserIds)
+	scopeAccounts := distinctNonEmptyStrings(params.AdminScopeAccounts)
+	if len(scopeAccounts) > 0 {
+		attrs, err := attributeDao.FindAccountCaseInsensitive(ctx, scopeAccounts)
+		if err != nil {
+			return err
+		}
+		if len(attrs) != len(scopeAccounts) {
+			return freeErrors.ParameterInvalidErr
+		}
+		for _, attr := range attrs {
+			if attr != nil && attr.UserID != "" {
+				scopeUserIDs = append(scopeUserIDs, attr.UserID)
+			}
+		}
+		scopeUserIDs = distinctNonEmptyStrings(scopeUserIDs)
+	}
+	if len(scopeUserIDs) > 0 {
+		users, err := orgUserDao.ListByOrgIdAndUserIDs(ctx, orgId, scopeUserIDs)
+		if err != nil {
+			return err
+		}
+		if len(users) != len(scopeUserIDs) {
+			return freeErrors.ParameterInvalidErr
+		}
+	}
+
+	return orgUserDao.UpdateAdminScopeUserIds(ctx, orgId, params.UserId, scopeUserIDs)
+}
+
 type UpdateUserStatusReq struct {
 	UserId string                       `json:"user_id"`
 	Status model.OrganizationUserStatus `json:"status"`
@@ -2142,8 +2211,45 @@ func applyLoginIPUserIDFilter(ctx context.Context, db *mongo.Database, req *dto.
 	return false, nil
 }
 
+func applyAdminScopeUserIDFilter(ctx context.Context, db *mongo.Database, orgId primitive.ObjectID, operator *model.OrganizationUser, req *dto.GetOrgUserReq) (empty bool, err error) {
+	if operator == nil ||
+		operator.Role == model.OrganizationUserSuperAdminRole ||
+		len(operator.AdminScopeUserIds) == 0 {
+		return false, nil
+	}
+	orgUserDao := model.NewOrganizationUserDao(db)
+	scopeUserIDs, err := orgUserDao.ListScopedUserIDs(ctx, orgId, operator.AdminScopeUserIds)
+	if err != nil {
+		return false, err
+	}
+	if len(scopeUserIDs) == 0 {
+		return true, nil
+	}
+	if len(req.UserIds) > 0 {
+		req.UserIds = intersectOrgUserIDs(req.UserIds, scopeUserIDs)
+		if len(req.UserIds) == 0 {
+			return true, nil
+		}
+	} else {
+		req.UserIds = scopeUserIDs
+	}
+	return false, nil
+}
+
 // GetOrgUserWithFilters 带过滤条件的查询组织用户（支持标签筛选）- 深度优化版本
-func (w *OrganizationUserSvc) GetOrgUserWithFilters(orgId primitive.ObjectID, req *dto.GetOrgUserReq, page *paginationUtils.DepPagination) (*paginationUtils.ListResp[*dto.OrgUserResp], error) {
+func (w *OrganizationUserSvc) GetOrgUserWithFilters(orgId primitive.ObjectID, operator *model.OrganizationUser, req *dto.GetOrgUserReq, page *paginationUtils.DepPagination) (*paginationUtils.ListResp[*dto.OrgUserResp], error) {
+	mongoCli := plugin.MongoCli()
+	db := mongoCli.GetDB()
+	ctx := context.TODO()
+
+	skip, err := applyAdminScopeUserIDFilter(ctx, db, orgId, operator, req)
+	if err != nil {
+		return nil, err
+	}
+	if skip {
+		return &paginationUtils.ListResp[*dto.OrgUserResp]{Total: 0, List: []*dto.OrgUserResp{}}, nil
+	}
+
 	// 仅当前端上送非空 account（JSON 字段名 account）时走账号精准查询；否则走 keyword 等原有逻辑
 	if trimmedAccount := strings.TrimSpace(req.Account); trimmedAccount != "" {
 		cpy := *req
@@ -2151,11 +2257,7 @@ func (w *OrganizationUserSvc) GetOrgUserWithFilters(orgId primitive.ObjectID, re
 		return w.GetOrgUserByAccount(orgId, &cpy, page)
 	}
 
-	mongoCli := plugin.MongoCli()
-	db := mongoCli.GetDB()
-	ctx := context.TODO()
-
-	skip, err := applyLoginIPUserIDFilter(ctx, db, req)
+	skip, err = applyLoginIPUserIDFilter(ctx, db, req)
 	if err != nil {
 		return nil, err
 	}
