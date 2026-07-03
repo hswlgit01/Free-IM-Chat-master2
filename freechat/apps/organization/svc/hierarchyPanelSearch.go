@@ -177,6 +177,11 @@ func (s *HierarchyService) SearchHierarchyPanel(ctx context.Context, organizatio
 	if !req.IncludeOrgNodes {
 		match["user_type"] = bson.M{"$ne": chat.OrganizationUserTypeOrganization}
 	}
+	if len(req.ScopeUserIDs) > 0 {
+		match["user_id"] = bson.M{"$in": req.ScopeUserIDs}
+	} else if req.ScopeRootUserIDs != nil {
+		match["user_id"] = bson.M{"$in": []string{}}
+	}
 	if req.Level > 0 {
 		match["level"] = req.Level
 	}

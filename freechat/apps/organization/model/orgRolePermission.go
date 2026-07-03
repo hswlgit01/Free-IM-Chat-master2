@@ -7,6 +7,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"strings"
 	"time"
 )
 
@@ -28,8 +29,13 @@ const (
 	PermissionCodeOfficialProtection PermissionCode = "official_protection" // 官方账号保护（不能被发起音视频、踢出群组、禁言）
 )
 
+const AdminPagePermissionPrefix = "page_"
+
 // IsValidPermissionCode 管理端可保存的权限码（已废弃的 basic 不再接受）
 func IsValidPermissionCode(c PermissionCode) bool {
+	if IsAdminPagePermission(c) {
+		return true
+	}
 	switch c {
 	case PermissionCodeModifyNickname,
 		PermissionCodeSendFile,
@@ -48,6 +54,14 @@ func IsValidPermissionCode(c PermissionCode) bool {
 	default:
 		return false
 	}
+}
+
+func IsAdminPagePermission(c PermissionCode) bool {
+	return strings.HasPrefix(string(c), AdminPagePermissionPrefix)
+}
+
+func IsAppFunctionPermission(c PermissionCode) bool {
+	return !IsAdminPagePermission(c)
 }
 
 type OrganizationRolePermission struct {

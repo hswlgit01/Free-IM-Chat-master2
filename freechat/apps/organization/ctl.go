@@ -726,7 +726,67 @@ func (w *OrganizationUserCtl) PostGetOrgUser(c *gin.Context) {
 	}
 
 	orgUserSvc := svc.NewOrganizationUserService()
-	resp, err := orgUserSvc.GetOrgUserWithFilters(org.ID, &req, page)
+	resp, err := orgUserSvc.GetOrgUserWithFilters(org.ID, org.OrgUser, &req, page)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, resp)
+}
+
+func (w *OrganizationUserCtl) PostUpdateAdminDataScope(c *gin.Context) {
+	data := svc.UpdateAdminDataScopeReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	if err := orgUserSvc.UpdateAdminDataScope(c, org.ID, data); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
+func (w *OrganizationUserCtl) PostUpdateAdminPagePermission(c *gin.Context) {
+	data := svc.UpdateAdminPagePermissionReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	orgUserSvc := svc.NewOrganizationUserService()
+	if err := orgUserSvc.UpdateAdminPagePermission(c, org.ID, data); err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
+func (w *OrganizationUserCtl) GetAdminPermission(c *gin.Context) {
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	resp, err := svc.NewOrganizationUserService().GetAdminPermission(org.OrgUser)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return

@@ -18,25 +18,26 @@ const (
 )
 
 type WithdrawalRecord struct {
-	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	OrderNo         string             `bson:"order_no" json:"orderNo"`                               // 提现订单号
-	UserID          string             `bson:"user_id" json:"userId"`                                 // 用户ID
-	OrganizationID  string             `bson:"organization_id" json:"organizationId"`                 // 组织ID
-	CurrencyID      primitive.ObjectID `bson:"currency_id" json:"currencyId"`                         // 货币ID
-	Amount          float64            `bson:"amount" json:"amount"`                                  // 提现金额
-	Fee             float64            `bson:"fee" json:"fee"`                                        // 手续费
-	ActualAmount    float64            `bson:"actual_amount" json:"actualAmount"`                     // 实际到账金额
-	Status          int32              `bson:"status" json:"status"`                                  // 状态: 0-待审核,1-已通过,2-打款中,3-已完成,4-已拒绝,5-已取消
-	PaymentMethodID string             `bson:"payment_method_id" json:"paymentMethodId"`              // 收款方式ID
-	PaymentType     int32              `bson:"payment_type" json:"paymentType"`                       // 收款方式类型: 0-银行卡,1-微信,2-支付宝
-	PaymentInfo     string             `bson:"payment_info" json:"paymentInfo"`                       // 收款账户信息(JSON字符串)
-	RejectReason    string             `bson:"reject_reason,omitempty" json:"rejectReason,omitempty"` // 拒绝原因
-	ApproverID      string             `bson:"approver_id,omitempty" json:"approverId,omitempty"`     // 审批人ID
-	ApproveTime     *time.Time         `bson:"approve_time,omitempty" json:"approveTime,omitempty"`   // 审批时间
-	TransferTime    *time.Time         `bson:"transfer_time,omitempty" json:"transferTime,omitempty"` // 打款时间
-	CompleteTime    *time.Time         `bson:"complete_time,omitempty" json:"completeTime,omitempty"` // 完成时间
-	CreatedAt       time.Time          `bson:"created_at" json:"createdAt"`
-	UpdatedAt       time.Time          `bson:"updated_at" json:"updatedAt"`
+	ID                     primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	OrderNo                string             `bson:"order_no" json:"orderNo"`                                                      // 提现订单号
+	UserID                 string             `bson:"user_id" json:"userId"`                                                        // 用户ID
+	OrganizationID         string             `bson:"organization_id" json:"organizationId"`                                        // 组织ID
+	CurrencyID             primitive.ObjectID `bson:"currency_id" json:"currencyId"`                                                // 货币ID
+	Amount                 float64            `bson:"amount" json:"amount"`                                                         // 提现金额
+	Fee                    float64            `bson:"fee" json:"fee"`                                                               // 手续费
+	ActualAmount           float64            `bson:"actual_amount" json:"actualAmount"`                                            // 实际到账金额
+	Status                 int32              `bson:"status" json:"status"`                                                         // 状态: 0-待审核,1-已通过,2-打款中,3-已完成,4-已拒绝,5-已取消
+	PaymentMethodID        string             `bson:"payment_method_id" json:"paymentMethodId"`                                     // 收款方式ID
+	PaymentType            int32              `bson:"payment_type" json:"paymentType"`                                              // 收款方式类型: 0-银行卡,1-微信,2-支付宝
+	PaymentInfo            string             `bson:"payment_info" json:"paymentInfo"`                                              // 收款账户信息(JSON字符串)
+	HandheldIDCardPhotoURL string             `bson:"handheld_id_card_photo_url,omitempty" json:"handheldIdCardPhotoUrl,omitempty"` // 手持身份证照片
+	RejectReason           string             `bson:"reject_reason,omitempty" json:"rejectReason,omitempty"`                        // 拒绝原因
+	ApproverID             string             `bson:"approver_id,omitempty" json:"approverId,omitempty"`                            // 审批人ID
+	ApproveTime            *time.Time         `bson:"approve_time,omitempty" json:"approveTime,omitempty"`                          // 审批时间
+	TransferTime           *time.Time         `bson:"transfer_time,omitempty" json:"transferTime,omitempty"`                        // 打款时间
+	CompleteTime           *time.Time         `bson:"complete_time,omitempty" json:"completeTime,omitempty"`                        // 完成时间
+	CreatedAt              time.Time          `bson:"created_at" json:"createdAt"`
+	UpdatedAt              time.Time          `bson:"updated_at" json:"updatedAt"`
 }
 
 func (WithdrawalRecord) TableName() string {

@@ -325,20 +325,21 @@ func (s *AdminWithdrawalSvc) SaveWithdrawalRule(ctx context.Context, organizatio
 // toWithdrawalRecordResp 转换为响应对象(辅助函数)
 func toWithdrawalRecordResp(record *chat.WithdrawalRecord) *withdrawalDto.WithdrawalRecordResp {
 	resp := &withdrawalDto.WithdrawalRecordResp{
-		ID:           record.ID.Hex(),
-		OrderNo:      record.OrderNo,
-		Amount:       record.Amount,
-		Fee:          record.Fee,
-		ActualAmount: record.ActualAmount,
-		Status:       record.Status,
-		PaymentType:  record.PaymentType,
-		PaymentInfo:  record.PaymentInfo,
-		RejectReason: record.RejectReason,
-		ApproveTime:  record.ApproveTime,
-		TransferTime: record.TransferTime,
-		CompleteTime: record.CompleteTime,
-		CreatedAt:    record.CreatedAt,
-		CurrencyID:   record.CurrencyID.Hex(),
+		ID:                     record.ID.Hex(),
+		OrderNo:                record.OrderNo,
+		Amount:                 record.Amount,
+		Fee:                    record.Fee,
+		ActualAmount:           record.ActualAmount,
+		Status:                 record.Status,
+		PaymentType:            record.PaymentType,
+		PaymentInfo:            record.PaymentInfo,
+		HandheldIDCardPhotoURL: record.HandheldIDCardPhotoURL,
+		RejectReason:           record.RejectReason,
+		ApproveTime:            record.ApproveTime,
+		TransferTime:           record.TransferTime,
+		CompleteTime:           record.CompleteTime,
+		CreatedAt:              record.CreatedAt,
+		CurrencyID:             record.CurrencyID.Hex(),
 	}
 
 	// 获取币种信息

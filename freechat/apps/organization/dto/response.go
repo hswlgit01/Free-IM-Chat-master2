@@ -166,12 +166,15 @@ func NewOrganizationResp(org *model.Organization, _ string) (*OrganizationResp, 
 type OrgUserResp struct {
 	ID primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 
-	OrganizationId primitive.ObjectID           `bson:"organization_id" json:"organization_id"`
-	ThirdUserId    string                       `bson:"third_user_id" json:"third_user_id"`
-	UserId         string                       `bson:"user_id" json:"user_id"`
-	Role           model.OrganizationUserRole   `bson:"role" json:"role"`
-	Status         model.OrganizationUserStatus `bson:"status" json:"status"`
-	ImServerUserID string                       `bson:"im_server_user_id" json:"im_server_user_id"`
+	OrganizationId       primitive.ObjectID           `bson:"organization_id" json:"organization_id"`
+	ThirdUserId          string                       `bson:"third_user_id" json:"third_user_id"`
+	UserId               string                       `bson:"user_id" json:"user_id"`
+	Role                 model.OrganizationUserRole   `bson:"role" json:"role"`
+	Status               model.OrganizationUserStatus `bson:"status" json:"status"`
+	ImServerUserID       string                       `bson:"im_server_user_id" json:"im_server_user_id"`
+	AdminScopeUserIds    []string                     `bson:"admin_scope_user_ids,omitempty" json:"admin_scope_user_ids,omitempty"`
+	AdminScopeAccounts   []string                     `bson:"admin_scope_accounts,omitempty" json:"admin_scope_accounts,omitempty"`
+	AdminPagePermissions []string                     `bson:"admin_page_permissions,omitempty" json:"admin_page_permissions,omitempty"`
 
 	// Attribute 来自 Mongo attribute 集合；其中 Account 对应字段 account（登录账号展示以此为准）
 	Attribute *userDto.AttributeResp `json:"attribute"`
@@ -261,6 +264,9 @@ func NewOrgUserRespWithBatchData(
 		Role:                    obj.Role,
 		Status:                  obj.Status,
 		ImServerUserID:          obj.ImServerUserId,
+		AdminScopeUserIds:       obj.AdminScopeUserIds,
+		AdminScopeAccounts:      obj.AdminScopeAccounts,
+		AdminPagePermissions:    obj.AdminPagePermissions,
 		Attribute:               attributeResp,
 		User:                    userResp,
 		LastLoginRecordIp:       lastLoginRecordIp,

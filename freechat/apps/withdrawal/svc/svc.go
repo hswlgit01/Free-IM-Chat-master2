@@ -35,26 +35,28 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID st
 		if dbutil.IsDBNotFound(err) {
 			// 如果没有规则,返回默认禁用状态
 			return &withdrawalDto.GetWithdrawalRuleResp{
-				IsEnabled:       false,
-				MinAmount:       5.0,
-				MaxAmount:       50000.0,
-				FeeFixed:        5.0,
-				FeeRate:         1.0,
-				NeedRealName:    true,
-				NeedBindAccount: true,
+				IsEnabled:               false,
+				MinAmount:               5.0,
+				MaxAmount:               50000.0,
+				FeeFixed:                5.0,
+				FeeRate:                 1.0,
+				NeedRealName:            true,
+				NeedBindAccount:         true,
+				NeedHandheldIDCardPhoto: true,
 			}, nil
 		}
 		return nil, errs.Wrap(err)
 	}
 
 	return &withdrawalDto.GetWithdrawalRuleResp{
-		IsEnabled:       rule.IsEnabled,
-		MinAmount:       rule.MinAmount,
-		MaxAmount:       rule.MaxAmount,
-		FeeFixed:        rule.FeeFixed,
-		FeeRate:         rule.FeeRate,
-		NeedRealName:    rule.NeedRealName,
-		NeedBindAccount: rule.NeedBindAccount,
+		IsEnabled:               rule.IsEnabled,
+		MinAmount:               rule.MinAmount,
+		MaxAmount:               rule.MaxAmount,
+		FeeFixed:                rule.FeeFixed,
+		FeeRate:                 rule.FeeRate,
+		NeedRealName:            rule.NeedRealName,
+		NeedBindAccount:         rule.NeedBindAccount,
+		NeedHandheldIDCardPhoto: true,
 	}, nil
 }
 
@@ -131,7 +133,12 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 		}
 	}
 
-	// 7. 获取钱包信息和检查余额
+	// 7. 每次提现都需要上传本次手持身份证照片。
+	if req.HandheldIDCardPhotoURL == "" {
+		return nil, freeErrors.ParameterInvalidErr.WrapMsg("handheld ID card photo is required")
+	}
+
+	// 8. 获取钱包信息和检查余额
 	db := plugin.MongoCli().GetDB()
 	walletInfoDao := walletModel.NewWalletInfoDao(db)
 	walletBalanceDao := walletModel.NewWalletBalanceDao(db)
@@ -203,12 +210,12 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 		}
 	}
 
-	// 8. 验证支付密码
+	// 9. 验证支付密码
 	if !utils.CheckPassword(req.PayPassword, walletInfo.PayPwd) {
 		return nil, freeErrors.UserPwdErrErr
 	}
 
-	// 9. 获取币种汇率，计算手续费（手续费统一按人民币计算）
+	// 10. 获取币种汇率，计算手续费（手续费统一按人民币计算）
 	currencyDao := walletModel.NewWalletCurrencyDao(db)
 	currency, err := currencyDao.GetById(ctx, currencyID)
 	if err != nil {
@@ -232,7 +239,7 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 	// 实际到账金额（原币种）
 	actualAmount := req.Amount - feeInCurrency
 
-	// 10. 获取收款账户信息
+	// 11. 获取收款账户信息
 	paymentMethodID, _ := primitive.ObjectIDFromHex(req.PaymentMethodID)
 	paymentMethod, _ := paymentMethodModel.GetPaymentMethodDao().FindByID(ctx, paymentMethodID)
 
@@ -245,26 +252,27 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 		"qrCodeUrl":   paymentMethod.QRCodeURL,
 	})
 
-	// 11. 创建提现记录
+	// 12. 创建提现记录
 	record := &chat.WithdrawalRecord{
-		OrderNo:         s.generateOrderNo(),
-		UserID:          userID,
-		OrganizationID:  organizationID,
-		CurrencyID:      currencyID,
-		Amount:          req.Amount,
-		Fee:             feeCNY, // 手续费保存为人民币金额
-		ActualAmount:    actualAmount,
-		Status:          chat.WithdrawalStatusPending,
-		PaymentMethodID: req.PaymentMethodID,
-		PaymentType:     paymentMethod.Type,
-		PaymentInfo:     string(paymentInfoBytes),
+		OrderNo:                s.generateOrderNo(),
+		UserID:                 userID,
+		OrganizationID:         organizationID,
+		CurrencyID:             currencyID,
+		Amount:                 req.Amount,
+		Fee:                    feeCNY, // 手续费保存为人民币金额
+		ActualAmount:           actualAmount,
+		Status:                 chat.WithdrawalStatusPending,
+		PaymentMethodID:        req.PaymentMethodID,
+		PaymentType:            paymentMethod.Type,
+		PaymentInfo:            string(paymentInfoBytes),
+		HandheldIDCardPhotoURL: req.HandheldIDCardPhotoURL,
 	}
 
 	if err := withdrawalModel.GetWithdrawalRecordDao().Create(ctx, record); err != nil {
 		return nil, errs.Wrap(err)
 	}
 
-	// 12. 扣除余额(冻结金额)
+	// 13. 扣除余额(冻结金额)
 	deductAmount := decimal.NewFromFloat(-req.Amount)
 	if err := walletBalanceDao.UpdateAvailableBalance(ctx, walletInfo.ID, currencyID, deductAmount); err != nil {
 		return nil, errs.Wrap(err)
@@ -484,20 +492,21 @@ func (s *WithdrawalSvc) getStatusText(status int32) string {
 // toWithdrawalRecordResp 转换为响应对象
 func (s *WithdrawalSvc) toWithdrawalRecordResp(record *chat.WithdrawalRecord) *withdrawalDto.WithdrawalRecordResp {
 	resp := &withdrawalDto.WithdrawalRecordResp{
-		ID:           record.ID.Hex(),
-		OrderNo:      record.OrderNo,
-		Amount:       record.Amount,
-		Fee:          record.Fee,
-		ActualAmount: record.ActualAmount,
-		Status:       record.Status,
-		PaymentType:  record.PaymentType,
-		PaymentInfo:  record.PaymentInfo,
-		RejectReason: record.RejectReason,
-		ApproveTime:  record.ApproveTime,
-		TransferTime: record.TransferTime,
-		CompleteTime: record.CompleteTime,
-		CreatedAt:    record.CreatedAt,
-		CurrencyID:   record.CurrencyID.Hex(),
+		ID:                     record.ID.Hex(),
+		OrderNo:                record.OrderNo,
+		Amount:                 record.Amount,
+		Fee:                    record.Fee,
+		ActualAmount:           record.ActualAmount,
+		Status:                 record.Status,
+		PaymentType:            record.PaymentType,
+		PaymentInfo:            record.PaymentInfo,
+		HandheldIDCardPhotoURL: record.HandheldIDCardPhotoURL,
+		RejectReason:           record.RejectReason,
+		ApproveTime:            record.ApproveTime,
+		TransferTime:           record.TransferTime,
+		CompleteTime:           record.CompleteTime,
+		CreatedAt:              record.CreatedAt,
+		CurrencyID:             record.CurrencyID.Hex(),
 	}
 
 	// 获取币种信息
