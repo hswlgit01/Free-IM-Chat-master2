@@ -20,6 +20,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"mime/multipart"
+	"strings"
 	"sync"
 	"time"
 )
@@ -38,6 +39,7 @@ const (
 	ExcelRowErrAccountRegexp       CmsImportUserViaExcelRowErrType = "AccountRegexp"       // 账号格式错误
 	ExcelRowErrMissingPwd          CmsImportUserViaExcelRowErrType = "MissingPwd"          // 密码为空
 	ExcelRowErrMissingNickname     CmsImportUserViaExcelRowErrType = "MissingNickname"     // 昵称为空
+	ExcelRowErrMissingInviteCode   CmsImportUserViaExcelRowErrType = "MissingInviteCode"   // 邀请码为空
 	ExcelRowErrAccountAlreadyExist CmsImportUserViaExcelRowErrType = "AccountAlreadyExist" // 账号已存在
 )
 
@@ -101,9 +103,10 @@ func (w *ImportUserSvc) CmsImportUserViaExcel(ctx context.Context, operationId s
 
 	err = plugin.MongoCli().GetTx().Transaction(context.TODO(), func(sessionCtx context.Context) error {
 		type ImportExcelUser struct {
-			Account  string `json:"account"`
-			Nickname string `json:"nickname"`
-			Password string `json:"password"`
+			Account        string `json:"account"`
+			Nickname       string `json:"nickname"`
+			Password       string `json:"password"`
+			InvitationCode string `json:"invitation_code"`
 		}
 
 		createUsers := make([]*ImportExcelUser, 0)
@@ -115,19 +118,20 @@ func (w *ImportUserSvc) CmsImportUserViaExcel(ctx context.Context, operationId s
 			}
 
 			currentRow := i + 1
-			if len(row) < 3 {
+			if len(row) < 4 {
 				resp.Error = append(resp.Error, &CmsImportUserViaExcelErr{
 					Row:  currentRow,
 					Type: ExcelRowErrExcelFormat,
-					Msg:  "row format error",
+					Msg:  "row format error, expected columns: account, nickname, password, invitation code",
 				})
 				continue
 			}
 
 			registerUser := &ImportExcelUser{
-				Account:  row[0],
-				Nickname: row[1],
-				Password: row[2],
+				Account:        strings.TrimSpace(row[0]),
+				Nickname:       strings.TrimSpace(row[1]),
+				Password:       strings.TrimSpace(row[2]),
+				InvitationCode: strings.TrimSpace(row[3]),
 			}
 			createUsers = append(createUsers, registerUser)
 
@@ -171,6 +175,16 @@ func (w *ImportUserSvc) CmsImportUserViaExcel(ctx context.Context, operationId s
 					Type: ExcelRowErrMissingPwd,
 					Data: registerUser,
 					Msg:  "password cannot be empty",
+				})
+				continue
+			}
+
+			if registerUser.InvitationCode == "" {
+				resp.Error = append(resp.Error, &CmsImportUserViaExcelErr{
+					Row:  currentRow,
+					Type: ExcelRowErrMissingInviteCode,
+					Data: registerUser,
+					Msg:  "invitation code cannot be empty",
 				})
 				continue
 			}
@@ -280,7 +294,7 @@ func (w *ImportUserSvc) CmsImportUserViaExcel(ctx context.Context, operationId s
 			if len(resp.Error) <= 0 {
 				organizationSvc := orgSvc.OrganizationSvc{}
 				joinOrgResp, err = organizationSvc.JoinOrgUsingInvitationCodeByAttr(sessionCtx, operationId, newUserID, orgSvc.JoinOrgUsingInvitationCodeReq{
-					InvitationCode: org.InvitationCode,
+					InvitationCode: registerUser.InvitationCode,
 					Nickname:       registerUser.Nickname,
 					FaceURL:        "",
 				}, attribute)
@@ -293,6 +307,15 @@ func (w *ImportUserSvc) CmsImportUserViaExcel(ctx context.Context, operationId s
 					})
 					continue
 					//return err
+				}
+				if joinOrgResp.OrgId != org.ID {
+					resp.Error = append(resp.Error, &CmsImportUserViaExcelErr{
+						Row:  currentRow,
+						Type: ExcelRowErrSystem,
+						Data: registerUser,
+						Msg:  "invitation code does not belong to current organization",
+					})
+					continue
 				}
 			}
 

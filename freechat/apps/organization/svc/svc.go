@@ -1547,9 +1547,25 @@ func distinctNonEmptyStrings(values []string) []string {
 }
 
 type ResetOrganizationUserPasswordReq struct {
-	UserID string `json:"userID" binding:"required"`
+	UserID string `json:"userID"`
+	UserId string `json:"user_id"`
 	// dawn 2026-06-23 修复重置密码报"无效的参数"：newPassword 改为可选(为空则后端回退默认 123456)，避免前端"重置为默认"未传该字段时 bind 失败。
-	NewPassword string `json:"newPassword"`
+	NewPassword      string `json:"newPassword"`
+	NewPasswordSnake string `json:"new_password"`
+}
+
+func (r ResetOrganizationUserPasswordReq) NormalizedUserID() string {
+	if strings.TrimSpace(r.UserID) != "" {
+		return strings.TrimSpace(r.UserID)
+	}
+	return strings.TrimSpace(r.UserId)
+}
+
+func (r ResetOrganizationUserPasswordReq) NormalizedNewPassword() string {
+	if strings.TrimSpace(r.NewPassword) != "" {
+		return strings.TrimSpace(r.NewPassword)
+	}
+	return strings.TrimSpace(r.NewPasswordSnake)
 }
 
 type UpdateOrganizationUserNicknameReq struct {
@@ -1732,7 +1748,11 @@ func (w *OrganizationUserSvc) ResetOrganizationUserPassword(ctx context.Context,
 		return freeErrors.ForbiddenErr("operator not found")
 	}
 
-	targetOrgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, params.UserID, orgId)
+	targetUserID := params.NormalizedUserID()
+	if targetUserID == "" {
+		return freeErrors.ParameterInvalidErr
+	}
+	targetOrgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, targetUserID, orgId)
 	if err != nil {
 		return err
 	}
@@ -1743,7 +1763,7 @@ func (w *OrganizationUserSvc) ResetOrganizationUserPassword(ctx context.Context,
 
 	// dawn 2026-06-23 修复组织后台重置密码报"无效的参数"：重置为默认密码时前端可能不传 newPassword，
 	// 为空则回退默认密码 123456，避免必填/空值报错。normalizeOrgPasswordForStorage 会按需做 md5。
-	newPwd := strings.TrimSpace(params.NewPassword)
+	newPwd := params.NormalizedNewPassword()
 	if newPwd == "" {
 		newPwd = "123456"
 	}
