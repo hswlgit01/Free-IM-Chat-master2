@@ -923,10 +923,11 @@ func registerDepAdminRouter(router *gin.Engine) {
 	{
 		messageCtl := message.NewMessageCtl()
 		messageApi.POST("/search", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsSearch) // 查询聊天记录并记录审计
+		// dawn 2026-07-06 撤回放开到所有组织角色：群主/群管理员的组织角色可能是任意值(甚至 Normal)，
+		// 不能在路由层按组织角色拦。真正判权在 CmsRevoke：超管/后台管理员/团队长走 admin token 全局撤回，
+		// 其余角色改用本人 IM token 交由 IM 核心按群角色校验(仅群主/群管理员放行，普通成员/业务员被拒)。
 		messageApi.POST("/revoke", chatMiddleware.CheckToken, depmw.CheckOrganization(
-			organizationModel.OrganizationUserSuperAdminRole,
-			organizationModel.OrganizationUserBackendAdminRole,
-			organizationModel.OrganizationUserGroupManagerRole,
+			organizationModel.AllOrganizationUserRole...,
 		), messageCtl.CmsRevoke) // 撤回聊天消息并记录审计
 		messageApi.POST("/delete", chatMiddleware.CheckToken, depmw.CheckOrganization(), messageCtl.CmsDelete) // 删除聊天消息并记录审计
 	}

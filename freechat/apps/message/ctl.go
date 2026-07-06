@@ -104,18 +104,19 @@ func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
 
 	forwardReq := pick(req, "conversationID", "seq", "userID")
 
-	// dawn 2026-07-06 修复"群里普通成员(业务员)也能撤群主/官方及他人消息"：
-	// 组织【超管/后台管理员】保留全局审计撤回(admin token，IM 核心视为管理员绕过群角色)；
-	// 【业务员 GroupManager】改用【本人 IM token】转发，交由 IM 核心按【群角色】判权——
-	// 只有该群群主/群管理员才能撤别人的消息，仅有业务员身份的普通群成员会被 IM 核心拒绝。
-	// (路由 depmw.CheckOrganization 已限定只有 SuperAdmin/BackendAdmin/GroupManager 可达本接口。)
+	// dawn 2026-07-06 撤回按角色分权(对齐客户端原设计 fb8e55a：撤别人=本群群主/群管理员 或 组织团队长)：
+	// 组织【超管/后台管理员/团队长】→ admin token 全局审计撤回(IM 核心视为管理员，绕过群角色)；
+	// 其余角色(业务员 GroupManager/普通成员等)→【本人 IM token】转发，交由 IM 核心按【群角色】判权——
+	// 只有该群群主/群管理员才能撤别人的消息，普通成员/仅业务员身份者会被 IM 核心拒绝。
+	// 路由已放开到所有组织角色(群主的组织角色可能是任意值)，真正判权在此。
 	var apiCtx context.Context
 	var err error
 	switch org.OrgUser.Role {
 	case organizationModel.OrganizationUserSuperAdminRole,
-		organizationModel.OrganizationUserBackendAdminRole:
+		organizationModel.OrganizationUserBackendAdminRole,
+		organizationModel.OrganizationUserTermManagerRole:
 		apiCtx, err = imAdminContext(c)
-	default: // GroupManager
+	default: // GroupManager / Normal / 其他：按本人群角色判权
 		// 撤回者强制为已登录本人的 IM 账号，避免伪造 userID 冒充他人身份撤回。
 		forwardReq["userID"] = org.OrgUser.ImServerUserId
 		apiCtx, err = imUserContext(c, org.OrgUser.ImServerUserId)
