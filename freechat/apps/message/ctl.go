@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	opModel "github.com/openimsdk/chat/freechat/apps/operationLog/model"
 	opSvc "github.com/openimsdk/chat/freechat/apps/operationLog/svc"
+	organizationModel "github.com/openimsdk/chat/freechat/apps/organization/model"
 	"github.com/openimsdk/chat/freechat/middleware"
 	"github.com/openimsdk/chat/freechat/plugin"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
@@ -102,7 +103,23 @@ func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
 	}
 
 	forwardReq := pick(req, "conversationID", "seq", "userID")
-	apiCtx, err := imAdminContext(c)
+
+	// dawn 2026-07-06 修复"群里普通成员(业务员)也能撤群主/官方及他人消息"：
+	// 组织【超管/后台管理员】保留全局审计撤回(admin token，IM 核心视为管理员绕过群角色)；
+	// 【业务员 GroupManager】改用【本人 IM token】转发，交由 IM 核心按【群角色】判权——
+	// 只有该群群主/群管理员才能撤别人的消息，仅有业务员身份的普通群成员会被 IM 核心拒绝。
+	// (路由 depmw.CheckOrganization 已限定只有 SuperAdmin/BackendAdmin/GroupManager 可达本接口。)
+	var apiCtx context.Context
+	var err error
+	switch org.OrgUser.Role {
+	case organizationModel.OrganizationUserSuperAdminRole,
+		organizationModel.OrganizationUserBackendAdminRole:
+		apiCtx, err = imAdminContext(c)
+	default: // GroupManager
+		// 撤回者强制为已登录本人的 IM 账号，避免伪造 userID 冒充他人身份撤回。
+		forwardReq["userID"] = org.OrgUser.ImServerUserId
+		apiCtx, err = imUserContext(c, org.OrgUser.ImServerUserId)
+	}
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "failed", err, nil))
 		apiresp.GinError(c, err)
@@ -191,6 +208,21 @@ func imAdminContext(c *gin.Context) (context.Context, error) {
 		return nil, err
 	}
 	return mctx.WithApiToken(ctxWithOpID, adminToken), nil
+}
+
+// imUserContext 以【指定 IM 用户本人】的 token 构造调用上下文，使 IM 核心按该用户的真实权限
+// (含群角色)判权，而非管理员绕过。用 Admin 平台(10)签发，避免顶掉该用户 App(iOS/Android) 的在线会话。
+func imUserContext(c *gin.Context, imUserID string) (context.Context, error) {
+	operationID, err := middleware.GetOperationId(c)
+	if err != nil {
+		return nil, err
+	}
+	ctxWithOpID := context.WithValue(c.Request.Context(), constantpb.OperationID, operationID)
+	userToken, err := plugin.ImApiCaller().GetUserToken(ctxWithOpID, imUserID, constantpb.AdminPlatformID)
+	if err != nil {
+		return nil, err
+	}
+	return mctx.WithApiToken(ctxWithOpID, userToken), nil
 }
 
 func pick(req map[string]any, keys ...string) map[string]any {
