@@ -17,6 +17,8 @@ import (
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
 	"github.com/openimsdk/chat/pkg/common/mctx"
 	constantpb "github.com/openimsdk/protocol/constant"
+	"github.com/openimsdk/protocol/group"
+	"github.com/openimsdk/protocol/sdkws"
 	"github.com/openimsdk/tools/apiresp"
 	"github.com/openimsdk/tools/log"
 	"go.mongodb.org/mongo-driver/bson"
@@ -104,10 +106,15 @@ func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
 
 	forwardReq := pick(req, "conversationID", "seq", "userID")
 
-	// dawn 2026-07-06 撤回按角色分权(对齐客户端原设计 fb8e55a：撤别人=本群群主/群管理员 或 组织团队长)：
+	// dawn 2026-07-07 撤回按角色分权(对齐客户端原设计 fb8e55a：撤别人=本群群主/群管理员 或 组织团队长)：
 	// 组织【超管/后台管理员/团队长】→ admin token 全局审计撤回(IM 核心视为管理员，绕过群角色)；
-	// 其余角色(业务员 GroupManager/普通成员等)→【本人 IM token】转发，交由 IM 核心按【群角色】判权——
-	// 只有该群群主/群管理员才能撤别人的消息，普通成员/仅业务员身份者会被 IM 核心拒绝。
+	// 其余角色(业务员 GroupManager/普通成员等)→ 在【本群】必须是【群主/群管理员】才放行，随后同样用
+	// admin token 转发(仅撤回校验用群角色，转发用 admin，保留 #6 GetMsgForRevoke 撤旧消息能力)。
+	//
+	// 修复"群主/群管理员撤别人消息也 撤回失败"：旧实现改用【本人 IM token】(imUserContext→
+	// GetUserToken platformID=AdminPlatformID(10))转发交 IM 核心判权，但 OpenIM /auth/get_user_token
+	// 会拒绝 AdminPlatformID(1001 ArgsError)，导致每次 GetUserToken 失败 → 撤回失败。改为在 chat 侧
+	// 直接查群角色(GetGroupMemberList filter=5 群主+群管理员)自行判权，避免那次会失败的取 token。
 	// 路由已放开到所有组织角色(群主的组织角色可能是任意值)，真正判权在此。
 	var apiCtx context.Context
 	var err error
@@ -116,10 +123,25 @@ func (ctl *MessageCtl) CmsRevoke(c *gin.Context) {
 		organizationModel.OrganizationUserBackendAdminRole,
 		organizationModel.OrganizationUserTermManagerRole:
 		apiCtx, err = imAdminContext(c)
-	default: // GroupManager / Normal / 其他：按本人群角色判权
+	default: // GroupManager / Normal / 其他：必须是本群群主/群管理员才能撤别人的消息
 		// 撤回者强制为已登录本人的 IM 账号，避免伪造 userID 冒充他人身份撤回。
-		forwardReq["userID"] = org.OrgUser.ImServerUserId
-		apiCtx, err = imUserContext(c, org.OrgUser.ImServerUserId)
+		imUserID := org.OrgUser.ImServerUserId
+		forwardReq["userID"] = imUserID
+		groupID := groupIDFromConversationID(stringValue(req["conversationID"]))
+		if groupID == "" {
+			err = freeErrors.ForbiddenErr("无法解析群聊会话，禁止撤回")
+			break
+		}
+		var isGroupAdmin bool
+		isGroupAdmin, err = ctl.isGroupOwnerOrAdmin(c, groupID, imUserID)
+		if err != nil {
+			break
+		}
+		if !isGroupAdmin {
+			err = freeErrors.ForbiddenErr("只有群主/群管理员可以撤回他人消息")
+			break
+		}
+		apiCtx, err = imAdminContext(c)
 	}
 	if err != nil {
 		ctl.writeOperationLog(c, org, opModel.OpTypeRevokeChatMessage, withResult(messageDetails(req), "failed", err, nil))
@@ -211,19 +233,43 @@ func imAdminContext(c *gin.Context) (context.Context, error) {
 	return mctx.WithApiToken(ctxWithOpID, adminToken), nil
 }
 
-// imUserContext 以【指定 IM 用户本人】的 token 构造调用上下文，使 IM 核心按该用户的真实权限
-// (含群角色)判权，而非管理员绕过。用 Admin 平台(10)签发，避免顶掉该用户 App(iOS/Android) 的在线会话。
-func imUserContext(c *gin.Context, imUserID string) (context.Context, error) {
-	operationID, err := middleware.GetOperationId(c)
-	if err != nil {
-		return nil, err
+// groupIDFromConversationID 从群会话 ID(格式 "sg_<groupID>")解析出 groupID；非群会话返回空串。
+func groupIDFromConversationID(conversationID string) string {
+	const prefix = "sg_"
+	if strings.HasPrefix(conversationID, prefix) {
+		return strings.TrimPrefix(conversationID, prefix)
 	}
-	ctxWithOpID := context.WithValue(c.Request.Context(), constantpb.OperationID, operationID)
-	userToken, err := plugin.ImApiCaller().GetUserToken(ctxWithOpID, imUserID, constantpb.AdminPlatformID)
-	if err != nil {
-		return nil, err
+	return ""
+}
+
+// isGroupOwnerOrAdmin 用 admin token 查询【本群】群主+群管理员名单(filter=5)，判断 imUserID 是否在其中。
+// 用于撤回"别人消息"的群角色判权：只有群主/群管理员放行(与客户端 canRevokeMessages / _queryOwnerAndAdmin 对齐)。
+func (ctl *MessageCtl) isGroupOwnerOrAdmin(c *gin.Context, groupID, imUserID string) (bool, error) {
+	if groupID == "" || imUserID == "" {
+		return false, nil
 	}
-	return mctx.WithApiToken(ctxWithOpID, userToken), nil
+	adminCtx, err := imAdminContext(c)
+	if err != nil {
+		return false, err
+	}
+	// filter=5：群主 + 群管理员；群主/管理员数量很少，一页 500 足够覆盖(含 3 万人大群)。
+	resp, err := plugin.ImApiCaller().GetGroupMemberList(adminCtx, group.GetGroupMemberListReq{
+		GroupID: groupID,
+		Filter:  5,
+		Pagination: &sdkws.RequestPagination{
+			PageNumber: 1,
+			ShowNumber: 500,
+		},
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, m := range resp.Members {
+		if m.UserID == imUserID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func pick(req map[string]any, keys ...string) map[string]any {
