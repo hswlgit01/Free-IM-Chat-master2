@@ -15,6 +15,7 @@ import (
 	"github.com/openimsdk/tools/log"
 	"github.com/openimsdk/tools/mcontext"
 
+	chatModel "github.com/openimsdk/chat/freechat/third/chat/model"
 	"github.com/openimsdk/chat/pkg/common/constant"
 	"github.com/openimsdk/chat/pkg/common/db/dbutil"
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
@@ -550,6 +551,28 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 		}
 		o.redisCli.Del(ctx, pwdErrKey)
 	}
+
+	// dawn 2026-07-09 异地登录限制必须走 App 主登录(/account/login → chat.Login)：
+	// 原先只在 H5 EmbedLogin 里校验，App 换 IP/换城市登录完全不拦，绑定表 user_login_city 也一直是空的。
+	// 仅普通会员(Normal)校验；组织后台管理员/团队长等角色放行。
+	orgUsers, err := o.Database.FindOrgUserByUserIds(ctx, []string{credential.UserID})
+	if err != nil {
+		return nil, err
+	}
+	if o.mongoDB != nil {
+		for _, orgUser := range orgUsers {
+			if orgUser == nil || orgUser.ImServerUserId == "" {
+				continue
+			}
+			if orgUser.Role != chatdb.OrganizationUserNormalRole {
+				continue
+			}
+			if err := chatModel.CheckAndBindLoginCity(ctx, o.mongoDB, orgUser.ImServerUserId, req.Ip); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	chatToken, err := o.Admin.CreateToken(ctx, credential.UserID, constant.NormalUser)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token %s", err)
@@ -575,13 +598,11 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 	}
 	resp.UserID = credential.UserID
 	resp.ChatToken = chatToken.Token
-	orgUsers, err := o.Database.FindOrgUserByUserIds(ctx, []string{resp.UserID})
-	if err != nil {
-		return nil, err
-	}
 	resp.ImServerIDs = make([]string, 0)
 	for _, orgUser := range orgUsers {
-		resp.ImServerIDs = append(resp.ImServerIDs, orgUser.ImServerUserId)
+		if orgUser != nil && orgUser.ImServerUserId != "" {
+			resp.ImServerIDs = append(resp.ImServerIDs, orgUser.ImServerUserId)
+		}
 	}
 	return resp, nil
 }

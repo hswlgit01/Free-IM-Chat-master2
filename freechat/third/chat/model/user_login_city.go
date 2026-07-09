@@ -5,6 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/openimsdk/chat/freechat/utils/freeErrors"
+	"github.com/openimsdk/chat/freechat/utils/ip2regionUtils"
+	"github.com/openimsdk/chat/pkg/common/db/dbutil"
 	"github.com/openimsdk/chat/tools/db/mongoutil"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -62,4 +65,30 @@ func (d *UserLoginCityDao) Upsert(ctx context.Context, userID, city, ip string) 
 func (d *UserLoginCityDao) DeleteByUserID(ctx context.Context, userID string) error {
 	_, err := d.Collection.DeleteOne(ctx, bson.M{"user_id": userID})
 	return err
+}
+
+// CheckAndBindLoginCity dawn 2026-07-09 异地登录限制核心校验(App 主登录 / H5 Embed 共用)。
+// 解析本次登录 IP 的市级城市：取不到城市(内网/未知 IP)时不拦截，避免误锁；
+// 已绑定且城市不同 → 拒绝；未绑定(或绑定城市为空) → 以本次城市绑定。
+func CheckAndBindLoginCity(ctx context.Context, db *mongo.Database, imUserID, ip string) error {
+	city := ip2regionUtils.GetCityByIP(ip)
+	if city == "" {
+		return nil
+	}
+	dao := NewUserLoginCityDao(db)
+	binding, err := dao.GetByUserID(ctx, imUserID)
+	if err != nil {
+		if dbutil.IsDBNotFound(err) {
+			return dao.Upsert(ctx, imUserID, city, ip)
+		}
+		return err
+	}
+	if binding.City != "" && binding.City != city {
+		return freeErrors.RemoteLoginCityErr("异地登录已被限制：当前登录城市(" + city +
+			")与账号绑定城市(" + binding.City + ")不一致，如需异地登录请联系管理员在后台清除登录IP。")
+	}
+	if binding.City == "" {
+		return dao.Upsert(ctx, imUserID, city, ip)
+	}
+	return nil
 }

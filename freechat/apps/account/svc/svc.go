@@ -19,7 +19,6 @@ import (
 	openImModel "github.com/openimsdk/chat/freechat/third/openIm/model"
 	"github.com/openimsdk/chat/freechat/utils"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
-	"github.com/openimsdk/chat/freechat/utils/ip2regionUtils"
 	"github.com/openimsdk/chat/pkg/common/constant"
 	"github.com/openimsdk/chat/pkg/common/db/dbutil"
 	"github.com/openimsdk/chat/pkg/common/imapi"
@@ -642,28 +641,7 @@ func (a *AccountSvc) EmbedLogin(ctx context.Context, remoteAddr, operationID str
 	return response.Secret(org.AesKeyBase64)
 }
 
-// checkAndBindLoginCity dawn 2026-07-03 异地登录限制核心校验。
-// 解析本次登录 IP 的市级城市：取不到城市(内网/未知 IP)时不拦截，避免误锁；
-// 已绑定且城市不同 → 拒绝；未绑定(或绑定城市为空) → 以本次城市绑定。
+// checkAndBindLoginCity 委托公共实现(与 App 主登录 /chat/login 共用)。
 func (a *AccountSvc) checkAndBindLoginCity(ctx context.Context, imUserID, ip string) error {
-	city := ip2regionUtils.GetCityByIP(ip)
-	if city == "" {
-		return nil
-	}
-	dao := chatModel.NewUserLoginCityDao(plugin.MongoCli().GetDB())
-	binding, err := dao.GetByUserID(ctx, imUserID)
-	if err != nil {
-		if dbutil.IsDBNotFound(err) {
-			return dao.Upsert(ctx, imUserID, city, ip)
-		}
-		return err
-	}
-	if binding.City != "" && binding.City != city {
-		return freeErrors.RemoteLoginCityErr("异地登录已被限制：当前登录城市(" + city +
-			")与账号绑定城市(" + binding.City + ")不一致，如需异地登录请联系管理员在后台清除登录IP。")
-	}
-	if binding.City == "" {
-		return dao.Upsert(ctx, imUserID, city, ip)
-	}
-	return nil
+	return chatModel.CheckAndBindLoginCity(ctx, plugin.MongoCli().GetDB(), imUserID, ip)
 }

@@ -191,18 +191,17 @@ func (o *Api) Login(c *gin.Context) {
 	}
 	apiCtx := mctx.WithApiToken(c, adminToken)
 
-	items := make([]BatchForceLogoutItem, 0)
+	// dawn 2026-07-09 登录成功后踢旧会话：原先只 batch 踢「当前 platform」，
+	// 同账号其它端/同端旧 WS 有时仍在线(用户表现：换 IP/换机登录后旧端不下线)。
+	// 改为对每个 im_server_user_id 全平台 ForceOffLine，再签发新 token。
 	for _, imServerID := range resp.ImServerIDs {
-		items = append(items, BatchForceLogoutItem{
-			UserID:     imServerID,
-			PlatformID: int32(req.Platform),
-		})
-	}
-
-	err = o.imApiCaller.ForceOffLines(apiCtx, BatchForceLogoutReq{Items: items})
-	if err != nil {
-		apiresp.GinError(c, err)
-		return
+		if imServerID == "" {
+			continue
+		}
+		if err := o.imApiCaller.ForceOffLine(apiCtx, imServerID); err != nil {
+			log.ZWarn(c, "ForceOffLine after login failed", err, "userID", imServerID)
+			// 不阻断登录：token 层 CreateToken 仍会踢同端旧 token
+		}
 	}
 
 	// chat-rpc returns the chat-side user_id in resp.UserID, but OpenIM only

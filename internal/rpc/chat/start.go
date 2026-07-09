@@ -7,6 +7,7 @@ import (
 
 	"github.com/openimsdk/chat/tools/db/redisutil"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
 
 	"github.com/openimsdk/chat/pkg/common/constant"
 	"github.com/openimsdk/chat/pkg/common/mctx"
@@ -105,6 +106,8 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 
 	// 初始化登录记录缓存
 	srv.LoginRecordCache = chatCache.NewLoginRecordCacheRedis(rdb, mgocli.GetDB())
+	// dawn 2026-07-09 异地登录限制：App 主登录路径也需要写 user_login_city
+	srv.mongoDB = mgocli.GetDB()
 
 	srv.rpcChatConf = config.RpcConfig
 	srv.Livekit = rtc.NewLiveKit(config.RpcConfig.LiveKit.Key, config.RpcConfig.LiveKit.Secret, config.RpcConfig.LiveKit.URL)
@@ -127,6 +130,7 @@ type chatSvr struct {
 	ChatAdminUserID  string
 	AllowRegister    bool
 	LoginRecordCache *chatCache.LoginRecordCacheRedis // 新增登录记录缓存字段
+	mongoDB          *mongo.Database                 // 异地登录城市绑定
 }
 
 func (o *chatSvr) WithAdminUser(ctx context.Context) context.Context {

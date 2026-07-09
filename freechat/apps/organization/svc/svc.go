@@ -2113,7 +2113,19 @@ func (w *OrganizationUserSvc) ClearOrgUserLoginCity(ctx context.Context, orgId p
 	if orgUser.ImServerUserId == "" {
 		return nil
 	}
-	return chatModel.NewUserLoginCityDao(db).DeleteByUserID(ctx, orgUser.ImServerUserId)
+	if err := chatModel.NewUserLoginCityDao(db).DeleteByUserID(ctx, orgUser.ImServerUserId); err != nil {
+		return err
+	}
+	// dawn 2026-07-09 清除绑定后强制踢下线：否则旧会话仍在线，用户换 IP 后
+	// 看起来像「换了 IP 也不下线」。清绑后须重新登录，才能以新城市重新绑定。
+	imApiCaller := plugin.ImApiCaller()
+	if imApiCaller != nil {
+		adminToken, terr := imApiCaller.ImAdminTokenWithDefaultAdmin(ctx)
+		if terr == nil {
+			_ = imApiCaller.ForceOffLine(mctx.WithApiToken(ctx, adminToken), orgUser.ImServerUserId)
+		}
+	}
+	return nil
 }
 
 func (w *OrganizationUserSvc) GetUserAllOrg(keyword string, userIds []string) (*paginationUtils.ListResp[*dto.OrgUserWithOrgResp], error) {
