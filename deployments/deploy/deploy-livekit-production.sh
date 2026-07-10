@@ -100,9 +100,14 @@ rollback_pending_deployment() {
   fi
 
   if [ -f "${TRANSACTION_DIR}/chat-changed" ]; then
-    install -m 600 "$CHAT_CONFIG_ROLLBACK" "$CHAT_CONFIG"
-    docker restart freechat-chat >/dev/null
-    wait_for_tcp 127.0.0.1 10008 60
+    if cmp -s "$CHAT_CONFIG_ROLLBACK" "$CHAT_CONFIG" && \
+      container_running freechat-chat && wait_for_tcp 127.0.0.1 10008 1; then
+      log "Chat is already running with its restored configuration"
+    else
+      install -m 600 "$CHAT_CONFIG_ROLLBACK" "$CHAT_CONFIG"
+      docker restart freechat-chat >/dev/null
+      wait_for_tcp 127.0.0.1 10008 420
+    fi
   fi
 
   if [ -f "${TRANSACTION_DIR}/renewal-changed" ]; then
@@ -532,7 +537,7 @@ PY
   if [ "$changed" = "true" ]; then
     log "Restarting Chat with the production LiveKit endpoint"
     if ! docker restart freechat-chat >/dev/null || \
-      ! wait_for_tcp 127.0.0.1 10008 60 || \
+      ! wait_for_tcp 127.0.0.1 10008 420 || \
       ! container_running freechat-chat; then
       log "Chat failed its health check"
       return 1
