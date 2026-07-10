@@ -7,14 +7,16 @@ import (
 
 func NewLiveKit(key, secret, url string) *LiveKit {
 	return &LiveKit{
-		token: auth.NewAccessToken(key, secret),
-		url:   url,
+		key:    key,
+		secret: secret,
+		url:    url,
 	}
 }
 
 type LiveKit struct {
-	token *auth.AccessToken
-	url   string
+	key    string
+	secret string
+	url    string
 }
 
 func (l *LiveKit) GetLiveKitURL() string {
@@ -26,5 +28,9 @@ func (l *LiveKit) GetLiveKitToken(room string, identity string) (string, error) 
 		RoomJoin: true,
 		Room:     room,
 	}
-	return l.token.AddGrant(grant).SetIdentity(identity).SetValidFor(time.Hour).ToJWT()
+	return auth.NewAccessToken(l.key, l.secret).
+		AddGrant(grant).
+		SetIdentity(identity).
+		SetValidFor(time.Hour).
+		ToJWT()
 }

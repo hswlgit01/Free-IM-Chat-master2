@@ -51,7 +51,11 @@ func (s *RtcService) GetTokenForVideoCall(ctx context.Context, req *GetTokenForV
 
 	// 获取LiveKit服务器URL
 	livestreamDao := livestreamModel.NewLivestreamUrlDao(plugin.RedisCli())
-	serverURL, err := livestreamDao.AutomaticallySearchUrl(ctx, plugin.ChatCfg().ChatRpcConfig.LiveKit.BackupUrls)
+	serverURL, err := livestreamDao.AutomaticallySearchPublicUrl(
+		ctx,
+		plugin.ChatCfg().ChatRpcConfig.LiveKit.BackupUrls,
+		plugin.ChatCfg().ChatRpcConfig.LiveKit.URL,
+	)
 	if err != nil {
 		return nil, err
 	}

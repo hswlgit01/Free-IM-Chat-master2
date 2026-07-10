@@ -162,13 +162,24 @@ func NewLivestreamService() (*LivestreamService, error) {
 	config := plugin.ChatCfg()
 
 	livestreamDao := model.NewLivestreamUrlDao(plugin.RedisCli())
-	url, err := livestreamDao.AutomaticallySearchUrl(context.Background(), plugin.ChatCfg().ChatRpcConfig.LiveKit.BackupUrls)
+	internalURL, err := livestreamDao.AutomaticallySearchUrl(
+		context.Background(),
+		config.ChatRpcConfig.LiveKit.BackupUrls,
+	)
+	if err != nil {
+		return nil, err
+	}
+	publicURL, err := livestreamDao.AutomaticallySearchPublicUrl(
+		context.Background(),
+		config.ChatRpcConfig.LiveKit.BackupUrls,
+		config.ChatRpcConfig.LiveKit.URL,
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	// 创建HTTP URL
-	httpUrl := strings.Replace(url, "wss://", "https://", 1)
+	httpUrl := strings.Replace(internalURL, "wss://", "https://", 1)
 	httpUrl = strings.Replace(httpUrl, "ws://", "http://", 1)
 
 	// 创建房间服务和入口点服务客户端
@@ -196,7 +207,7 @@ func NewLivestreamService() (*LivestreamService, error) {
 		egressService:  egressService,
 		apiKey:         config.ChatRpcConfig.LiveKit.Key,
 		apiSecret:      config.ChatRpcConfig.LiveKit.Secret,
-		wsUrl:          url,
+		wsUrl:          publicURL,
 	}, nil
 }
 

@@ -59,6 +59,7 @@ verifyCode:
 
 # 音视频相关配置
 liveKit:
+  url: "" # 本地留空回退到 backupUrls；生产环境必须配置公网 ws/wss
   backupUrls: [ "ws://localhost:7880", ]  # LIVEKIT_URL, LiveKit server address and port (本地调试使用localhost)
   key: "devkey"
   secret: "secret"

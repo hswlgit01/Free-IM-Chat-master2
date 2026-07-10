@@ -2,15 +2,14 @@ package livestream
 
 import (
 	"context"
+	"strings"
+
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/openimsdk/chat/freechat/apps/livestream/model"
 	"github.com/openimsdk/chat/freechat/plugin"
-	"github.com/openimsdk/chat/freechat/utils/netUtils"
 	"github.com/openimsdk/tools/log"
 	"github.com/robfig/cron/v3"
-	"strings"
-	"time"
 )
 
 // LivestreamCronJob 汇率获取定时任务
@@ -100,28 +99,16 @@ func (e *LivestreamCronJob) AutoRemoveLiveRoom(ctx context.Context) {
 }
 
 func (e *LivestreamCronJob) GetLivestreamUrl(ctx context.Context) {
-
-	chatRpcCfg := &plugin.ChatCfg().ChatRpcConfig
-	// 没有获取过值,获取值
-	for _, url := range plugin.ChatCfg().ChatRpcConfig.LiveKit.BackupUrls {
-		_, host, port, err := netUtils.ParseURL(url)
-		if err != nil {
-			log.ZError(ctx, "解析url失败", err, "url", url)
-			continue
-		}
-
-		ok := netUtils.PingTCP(host, port, time.Second*2)
-		if ok {
-			chatRpcCfg.LiveKit.URL = url
-			break
-		}
-	}
-
-	if chatRpcCfg.LiveKit.URL == "" {
-		log.ZError(ctx, "没有可用的直播url", nil)
+	config := plugin.ChatCfg().ChatRpcConfig.LiveKit
+	url, err := model.NewLivestreamUrlDao(plugin.RedisCli()).AutomaticallySearchPublicUrl(
+		ctx,
+		config.BackupUrls,
+		config.URL,
+	)
+	if err != nil {
+		log.ZError(ctx, "没有可用的直播url", err)
 		return
 	}
 
-	log.ZInfo(ctx, "直播url数据已更新", "selected url", plugin.ChatCfg().ChatRpcConfig.LiveKit.URL)
-
+	log.ZInfo(ctx, "直播url数据已更新", "selected url", url)
 }

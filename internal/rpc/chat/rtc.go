@@ -17,7 +17,11 @@ func (o *chatSvr) GetTokenForVideoMeeting(ctx context.Context, req *chat.GetToke
 	}
 
 	livestreamDao := livestreamModel.NewLivestreamUrlDao(o.redisCli)
-	url, err := livestreamDao.AutomaticallySearchUrl(ctx, o.rpcChatConf.LiveKit.BackupUrls)
+	url, err := livestreamDao.AutomaticallySearchPublicUrl(
+		ctx,
+		o.rpcChatConf.LiveKit.BackupUrls,
+		o.rpcChatConf.LiveKit.URL,
+	)
 	if err != nil {
 		return nil, err
 	}
