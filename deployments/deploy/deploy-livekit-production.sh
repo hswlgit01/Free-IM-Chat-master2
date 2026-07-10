@@ -15,6 +15,7 @@ readonly CHAT_CONFIG_ROLLBACK="${LIVEKIT_DIR}/chat-rpc-chat.yml.rollback"
 readonly CREDENTIALS="${LIVEKIT_DIR}/credentials.env"
 readonly LIVEKIT_CONFIG="${LIVEKIT_DIR}/livekit.yaml"
 readonly NGINX_CONFIG="${LIVEKIT_DIR}/nginx.conf"
+readonly SYSCTL_CONFIG="/etc/sysctl.d/99-freechat-livekit.conf"
 readonly LOCK_FILE="/var/lock/freechat-livekit.lock"
 readonly TRANSACTION_DIR="${LIVEKIT_DIR}/deployment-transaction"
 readonly MODE="${1:-deploy}"
@@ -267,6 +268,12 @@ ufw allow 7882/udp comment 'LiveKit ICE UDP' >/dev/null
 ufw delete allow 7880/tcp >/dev/null 2>&1 || true
 ufw delete deny 7880/tcp >/dev/null 2>&1 || true
 ufw insert 1 deny 7880/tcp comment 'LiveKit internal only' >/dev/null
+
+printf '%s\n' \
+  'net.core.rmem_max = 5000000' \
+  'net.core.wmem_max = 5000000' >"$SYSCTL_CONFIG"
+chmod 644 "$SYSCTL_CONFIG"
+sysctl -q -p "$SYSCTL_CONFIG"
 
 challenge_name="livekit-preflight-$(openssl rand -hex 8)"
 challenge_value="$(openssl rand -hex 16)"

@@ -49,10 +49,21 @@ jobs:
           set -euo pipefail
 
           curl --silent --show-error --output /dev/null \
-            --connect-timeout 10 --retry 5 --retry-delay 2 \
+            --connect-timeout 10 --retry 5 --retry-all-errors --retry-delay 5 \
             https://8.148.66.77/
 
-          timeout 10 bash -c '</dev/tcp/8.148.66.77/7881'
+          ice_tcp_ready=false
+          for _ in $(seq 1 5); do
+            if timeout 10 bash -c '</dev/tcp/8.148.66.77/7881'; then
+              ice_tcp_ready=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ice_tcp_ready" != true ]; then
+            echo 'LiveKit ICE/TCP port 7881 is not publicly reachable' >&2
+            exit 1
+          fi
 
           if timeout 3 bash -c '</dev/tcp/8.148.66.77/7880' 2>/dev/null; then
             echo 'LiveKit internal port 7880 is unexpectedly public' >&2
