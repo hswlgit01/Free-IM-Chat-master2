@@ -676,6 +676,7 @@ func registerDepAdminRouter(router *gin.Engine) {
 
 		// 内部API：供Free-IM-Server调用（无需token验证）
 		orgApi.GET("/internal/check_user_protection", organizationCtl.InternalCheckUserProtection) // 检查用户是否拥有官方账号保护权限
+		orgApi.POST("/internal/check_ws_login_city", organizationCtl.InternalCheckWSLoginCity)     // WS握手/重连城市校验（X-Internal-Secret）
 	}
 
 	orgUserCtl := organization.NewOrganizationUserCtl()

@@ -55,6 +55,17 @@ func (o *UserLoginRecordDao) GetByUserId(ctx context.Context, userId string) (*U
 	return mongoutil.FindOne[*UserLoginRecord](ctx, o.Collection, bson.M{"user_id": userId}, opts)
 }
 
+// FindRecentByUserID returns newest records first. City bootstrap checks a
+// small history window so a latest private/invalid IP does not hide the most
+// recent usable public login location.
+func (o *UserLoginRecordDao) FindRecentByUserID(ctx context.Context, userID string, limit int64) ([]*UserLoginRecord, error) {
+	if userID == "" || limit <= 0 {
+		return []*UserLoginRecord{}, nil
+	}
+	opts := options.Find().SetSort(bson.D{{Key: "login_time", Value: -1}}).SetLimit(limit)
+	return mongoutil.Find[*UserLoginRecord](ctx, o.Collection, bson.M{"user_id": userID}, opts)
+}
+
 func (o *UserLoginRecordDao) CountTotal(ctx context.Context, before *time.Time) (count int64, err error) {
 	filter := bson.M{}
 	if before != nil {

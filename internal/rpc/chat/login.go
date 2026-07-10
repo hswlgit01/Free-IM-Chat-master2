@@ -16,6 +16,7 @@ import (
 	"github.com/openimsdk/tools/mcontext"
 
 	chatModel "github.com/openimsdk/chat/freechat/third/chat/model"
+	"github.com/openimsdk/chat/freechat/third/chat/sessiontoken"
 	"github.com/openimsdk/chat/pkg/common/constant"
 	"github.com/openimsdk/chat/pkg/common/db/dbutil"
 	chatdb "github.com/openimsdk/chat/pkg/common/db/table/chat"
@@ -560,20 +561,49 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 		return nil, err
 	}
 	if o.mongoDB != nil {
+		activeNormalUsers := make([]*chatdb.OrganizationUser, 0, len(orgUsers))
+		// Read-only phase first: a mismatch in any active organization must not
+		// leave earlier empty organization bindings mutated by a failed login.
 		for _, orgUser := range orgUsers {
 			if orgUser == nil || orgUser.ImServerUserId == "" {
 				continue
 			}
-			if orgUser.Role != chatdb.OrganizationUserNormalRole {
+			if orgUser.Role != chatdb.OrganizationUserNormalRole || orgUser.Status != chatdb.OrganizationUserEnableStatus {
 				continue
 			}
-			if err := chatModel.CheckAndBindLoginCity(ctx, o.mongoDB, orgUser.ImServerUserId, req.Ip); err != nil {
+			activeNormalUsers = append(activeNormalUsers, orgUser)
+			if _, _, err := chatModel.CheckExistingLoginCity(ctx, o.mongoDB, orgUser.ImServerUserId, req.Ip); err != nil {
+				return nil, err
+			}
+		}
+		// Mutation phase runs only after every existing binding passed.
+		for _, orgUser := range activeNormalUsers {
+			if _, err := chatModel.CheckAndBindLoginCityWithHistory(
+				ctx, o.mongoDB, orgUser.ImServerUserId, credential.UserID, req.Ip,
+			); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	chatToken, err := o.Admin.CreateToken(ctx, credential.UserID, constant.NormalUser)
+	// A successful credential + city check rotates the chat-side session.
+	// Keep this after every authentication check so an unauthenticated request
+	// cannot invalidate the currently logged-in device.
+	chatToken, err := sessiontoken.Rotate(
+		ctx,
+		o.redisCli,
+		credential.UserID,
+		func(lockCtx context.Context) error {
+			return o.Admin.InvalidateToken(lockCtx, credential.UserID)
+		},
+		func(lockCtx context.Context) (string, error) {
+			token, err := o.Admin.CreateToken(lockCtx, credential.UserID, constant.NormalUser)
+			if err != nil {
+				return "", err
+			}
+			return token.Token, nil
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token %s", err)
 	}
@@ -597,7 +627,7 @@ func (o *chatSvr) Login(ctx context.Context, req *chat.LoginReq) (*chat.LoginRes
 		}
 	}
 	resp.UserID = credential.UserID
-	resp.ChatToken = chatToken.Token
+	resp.ChatToken = chatToken
 	resp.ImServerIDs = make([]string, 0)
 	for _, orgUser := range orgUsers {
 		if orgUser != nil && orgUser.ImServerUserId != "" {

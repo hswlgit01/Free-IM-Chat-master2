@@ -2,6 +2,7 @@ package svc
 
 import (
 	"context"
+	stdErrors "errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -1416,10 +1417,16 @@ func (w *UserSvc) SuperAdminResetUserPassword(ctx context.Context, req *dto.Supe
 		return freeErrors.SystemErr(fmt.Errorf("failed to get org users: %v", err))
 	}
 	// 强制用户下线
+	var forceOfflineErrs []error
 	if len(orgUsers) > 0 {
 		for _, orgUser := range orgUsers {
-			imApiCaller.ForceOffLine(apiCtx, orgUser.ImServerUserId)
+			if err := imApiCaller.ForceOffLine(apiCtx, orgUser.ImServerUserId); err != nil {
+				forceOfflineErrs = append(forceOfflineErrs, fmt.Errorf("force offline %s: %w", orgUser.ImServerUserId, err))
+			}
 		}
+	}
+	if err := stdErrors.Join(forceOfflineErrs...); err != nil {
+		return freeErrors.SystemErr(err)
 	}
 	return nil
 }

@@ -2113,18 +2113,29 @@ func (w *OrganizationUserSvc) ClearOrgUserLoginCity(ctx context.Context, orgId p
 	if orgUser.ImServerUserId == "" {
 		return nil
 	}
-	if err := chatModel.NewUserLoginCityDao(db).DeleteByUserID(ctx, orgUser.ImServerUserId); err != nil {
+	// Revoke the chat-side session first so an old token cannot call
+	// change_org_user and consume the reset before the user re-authenticates.
+	if _, err := plugin.AdminClient().InvalidateToken(ctx, &adminpb.InvalidateTokenReq{UserID: orgUser.UserId}); err != nil {
 		return err
 	}
-	// dawn 2026-07-09 清除绑定后强制踢下线：否则旧会话仍在线，用户换 IP 后
-	// 看起来像「换了 IP 也不下线」。清绑后须重新登录，才能以新城市重新绑定。
-	imApiCaller := plugin.ImApiCaller()
-	if imApiCaller != nil {
-		adminToken, terr := imApiCaller.ImAdminTokenWithDefaultAdmin(ctx)
-		if terr == nil {
-			_ = imApiCaller.ForceOffLine(mctx.WithApiToken(ctx, adminToken), orgUser.ImServerUserId)
-		}
+	// Keep an explicit reset marker instead of deleting the row. A delete would
+	// look like a pre-migration account and bootstrap the old historical city.
+	if err := chatModel.NewUserLoginCityDao(db).ResetByUserID(ctx, orgUser.ImServerUserId); err != nil {
+		return err
 	}
+
+	imApiCaller := plugin.ImApiCaller()
+	if imApiCaller == nil {
+		return freeErrors.SystemErr(errors.New("IM API caller is not initialized"))
+	}
+	adminToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := imApiCaller.ForceOffLine(mctx.WithApiToken(ctx, adminToken), orgUser.ImServerUserId); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -2182,6 +2193,9 @@ func (w *OrganizationUserSvc) GetUserAllOrg(keyword string, userIds []string) (*
 type ChangeOrgUserReq struct {
 	OrgId    primitive.ObjectID `json:"org_id"`
 	Platform int32              `json:"platform"`
+	// IP is derived from the HTTP peer/trusted proxy chain by the controller;
+	// it must never be accepted from the request body.
+	IP string `json:"-"`
 }
 
 type ChangeOrgUserResp struct {
@@ -2190,12 +2204,87 @@ type ChangeOrgUserResp struct {
 	ImServerUserId string             `json:"im_server_user_id"`
 }
 
+const LoginCityReasonRoleExempt = "role_exempt"
+
+type CheckWSLoginCityReq struct {
+	UserID string `json:"user_id" binding:"required"`
+	IP     string `json:"ip" binding:"required"`
+}
+
+type CheckWSLoginCityResp struct {
+	Allowed     bool   `json:"allowed"`
+	Reason      string `json:"reason"`
+	CurrentCity string `json:"current_city,omitempty"`
+	BoundCity   string `json:"bound_city,omitempty"`
+	// ChatUserID is required only to revoke ChatTokens after a mismatch and
+	// must not be exposed to the internal caller.
+	ChatUserID  string   `json:"-"`
+	ChatUserIDs []string `json:"-"`
+}
+
+// CheckWSLoginCity validates an OpenIM identity before msggateway accepts a
+// WebSocket. Only Normal organization users are restricted. Other identities
+// (including OpenIM service/notification accounts) remain exempt.
+func (w *OrganizationUserSvc) CheckWSLoginCity(ctx context.Context, req CheckWSLoginCityReq) (*CheckWSLoginCityResp, error) {
+	db := plugin.MongoCli().GetDB()
+	orgUsers, err := model.NewOrganizationUserDao(db).GetByIMServerUserIds(ctx, []string{req.UserID})
+	if err != nil {
+		return nil, err
+	}
+	normalUsers := make([]*model.OrganizationUser, 0, len(orgUsers))
+	chatUserIDs := make([]string, 0, len(orgUsers))
+	seenChatUsers := make(map[string]struct{}, len(orgUsers))
+	for _, orgUser := range orgUsers {
+		if orgUser == nil || orgUser.Status != model.OrganizationUserEnableStatus || orgUser.Role != model.OrganizationUserNormalRole {
+			continue
+		}
+		normalUsers = append(normalUsers, orgUser)
+		if _, exists := seenChatUsers[orgUser.UserId]; !exists {
+			seenChatUsers[orgUser.UserId] = struct{}{}
+			chatUserIDs = append(chatUserIDs, orgUser.UserId)
+		}
+	}
+	if len(normalUsers) == 0 {
+		return &CheckWSLoginCityResp{Allowed: true, Reason: LoginCityReasonRoleExempt}, nil
+	}
+	// Defensive ordering for dirty legacy data with duplicate IM IDs. An
+	// elevated duplicate must never win a nondeterministic FindOne and bypass a
+	// Normal membership.
+	sort.Slice(normalUsers, func(i, j int) bool { return normalUsers[i].UserId < normalUsers[j].UserId })
+	sort.Strings(chatUserIDs)
+
+	var result *chatModel.LoginCityCheckResult
+	for _, orgUser := range normalUsers {
+		result, err = chatModel.CheckLoginCityForSession(
+			ctx, db, orgUser.ImServerUserId, orgUser.UserId, req.IP,
+		)
+		if err != nil || (result != nil && !result.Allowed) {
+			break
+		}
+	}
+	if result == nil {
+		return nil, err
+	}
+	firstChatUserID := ""
+	if len(chatUserIDs) > 0 {
+		firstChatUserID = chatUserIDs[0]
+	}
+	return &CheckWSLoginCityResp{
+		Allowed:     result.Allowed,
+		Reason:      result.Reason,
+		CurrentCity: result.CurrentCity,
+		BoundCity:   result.BoundCity,
+		ChatUserID:  firstChatUserID,
+		ChatUserIDs: chatUserIDs,
+	}, err
+}
+
 // ChangeOrgUser 切换组织用户
 func (w *OrganizationUserSvc) ChangeOrgUser(ctx context.Context, operationID string, userId string, req ChangeOrgUserReq) (*ChangeOrgUserResp, error) {
 	mongoCli := plugin.MongoCli()
 	orgUserDao := model.NewOrganizationUserDao(mongoCli.GetDB())
 
-	orgUser, err := orgUserDao.GetByUserIdAndOrgId(context.Background(), userId, req.OrgId)
+	orgUser, err := orgUserDao.GetByUserIdAndOrgId(ctx, userId, req.OrgId)
 	if err != nil {
 		return nil, err
 	}
@@ -2205,8 +2294,22 @@ func (w *OrganizationUserSvc) ChangeOrgUser(ctx context.Context, operationID str
 	}
 
 	org, err := orgCache.NewOrgCacheRedis(plugin.RedisCli(), mongoCli.GetDB()).GetByIdAndStatus(ctx, orgUser.OrganizationId, model.OrganizationStatusPass)
-	if err != nil && !dbutil.IsDBNotFound(err) {
+	if err != nil || org == nil {
 		return nil, errs.NewCodeError(freeErrors.ErrSystem, "failed to query org by email")
+	}
+	if _, ok := pkgConstant.PlatformID2Name[int(req.Platform)]; !ok {
+		return nil, freeErrors.ParameterInvalidErr
+	}
+
+	// Switching organization mints a fresh IM token and therefore is another
+	// session entry point. It is not a password/verification-code login, so it
+	// may restore history but must never consume an administrator reset.
+	if orgUser.Role == model.OrganizationUserNormalRole {
+		if _, err := chatModel.CheckLoginCityForSession(
+			ctx, mongoCli.GetDB(), orgUser.ImServerUserId, orgUser.UserId, req.IP,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	// 获取im token
@@ -2223,11 +2326,12 @@ func (w *OrganizationUserSvc) ChangeOrgUser(ctx context.Context, operationID str
 	}
 
 	// 记录用户切换组织的登录记录（异步处理）
+	asyncCtx := context.WithValue(context.Background(), constantpb.OperationID, operationID)
 	go func(imServerUserId string, orgId primitive.ObjectID) {
 		changeOrgDao := model.NewChangeOrgUserDao(mongoCli.GetDB())
-		err := changeOrgDao.UpsertTodayLoginRecord(ctxWithOpID, imServerUserId, orgId)
+		err := changeOrgDao.UpsertTodayLoginRecord(asyncCtx, imServerUserId, orgId)
 		if err != nil {
-			log.ZError(ctxWithOpID, "记录用户切换组织失败", err, "im_server_user_id", imServerUserId, "org_id", orgId)
+			log.ZError(asyncCtx, "记录用户切换组织失败", err, "im_server_user_id", imServerUserId, "org_id", orgId)
 		}
 	}(orgUser.ImServerUserId, orgUser.OrganizationId)
 
@@ -3416,33 +3520,41 @@ func (s *OrganizationSvc) CheckUserHasProtection(ctx context.Context, userID str
 	db := plugin.MongoCli().GetDB()
 	orgUserDao := model.NewOrganizationUserDao(db)
 
-	// 1. 尝试通过 user_id 获取用户组织信息
-	orgUser, err := orgUserDao.GetByUserId(ctx, userID)
-	if err != nil {
-		// 如果通过 user_id 找不到，尝试通过 im_server_user_id 查找
-		// 这是因为 Flutter 客户端传入的是 OpenIM 的用户ID
-		orgUser, err = orgUserDao.GetByImServerUserId(ctx, userID)
-		if err != nil {
-			// 两种ID都找不到用户，没有保护权限
-			return false, nil
-		}
-	}
-
-	// 2. 查询该角色是否拥有 official_protection 权限
-	// 移除硬编码的角色检查，改为完全依赖权限表配置
-	// 任何角色（SuperAdmin/BackendAdmin/GroupManager/Normal）都可以通过权限表配置获得保护
-	orgRolePermissionDao := model.NewOrganizationRolePermissionDao(db)
-	hasPermission, err := orgRolePermissionDao.ExistPermission(
-		ctx,
-		orgUser.OrganizationId,
-		orgUser.Role,
-		model.PermissionCodeOfficialProtection,
-	)
+	// Clients and OpenIM services normally pass im_server_user_id. Query that
+	// first because it identifies the organization identity directly. The
+	// chat-side user_id fallback may have multiple organization memberships, so
+	// every enabled membership must be checked instead of relying on FindOne's
+	// unspecified document order.
+	orgUsers, err := orgUserDao.ListByImServerUserId(ctx, userID)
 	if err != nil {
 		return false, err
 	}
+	if len(orgUsers) == 0 {
+		orgUsers, err = orgUserDao.ListByUserId(ctx, userID)
+		if err != nil {
+			return false, err
+		}
+	}
 
-	return hasPermission, nil
+	orgRolePermissionDao := model.NewOrganizationRolePermissionDao(db)
+	for _, orgUser := range orgUsers {
+		if orgUser == nil || orgUser.Status != model.OrganizationUserEnableStatus {
+			continue
+		}
+		hasPermission, err := orgRolePermissionDao.ExistPermission(
+			ctx,
+			orgUser.OrganizationId,
+			orgUser.Role,
+			model.PermissionCodeOfficialProtection,
+		)
+		if err != nil {
+			return false, err
+		}
+		if hasPermission {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 type UpdateCheckinRuleReq struct {

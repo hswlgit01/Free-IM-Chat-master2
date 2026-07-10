@@ -2,7 +2,10 @@ package organization
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
+	"net/http"
 	"slices"
 
 	opModel "github.com/openimsdk/chat/freechat/apps/operationLog/model"
@@ -21,7 +24,9 @@ import (
 	"github.com/openimsdk/chat/freechat/utils/ginUtils"
 	"github.com/openimsdk/chat/freechat/utils/paginationUtils"
 	"github.com/openimsdk/chat/pkg/common/mctx"
+	adminpb "github.com/openimsdk/chat/pkg/protocol/admin"
 	"github.com/openimsdk/tools/apiresp"
+	toolerrs "github.com/openimsdk/tools/errs"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -704,6 +709,7 @@ func (w *OrganizationUserCtl) PostChangeOrgUser(c *gin.Context) {
 		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
 		return
 	}
+	data.IP = ginUtils.GetClientIP(c)
 
 	userId, _, err := mctx.Check(c)
 	if err != nil {
@@ -717,7 +723,7 @@ func (w *OrganizationUserCtl) PostChangeOrgUser(c *gin.Context) {
 		return
 	}
 	orgUserSvc := svc.NewOrganizationUserService()
-	resp, err := orgUserSvc.ChangeOrgUser(context.TODO(), operationID, userId, data)
+	resp, err := orgUserSvc.ChangeOrgUser(c, operationID, userId, data)
 	if err != nil {
 		apiresp.GinError(c, err)
 		return
@@ -1230,6 +1236,72 @@ func (w *OrganizationCtl) InternalCheckUserProtection(c *gin.Context) {
 		"user_id":        userID,
 		"has_protection": hasProtection,
 	})
+}
+
+const internalSecretHeader = "X-Internal-Secret"
+
+func constantTimeSecretEqual(expected, provided string) bool {
+	if expected == "" || provided == "" {
+		return false
+	}
+	// Hash first so ConstantTimeCompare always receives equal-length slices.
+	expectedHash := sha256.Sum256([]byte(expected))
+	providedHash := sha256.Sum256([]byte(provided))
+	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
+}
+
+// InternalCheckWSLoginCity is called by OpenIM msggateway during every WS
+// handshake/reconnect. This endpoint can create a missing binding, so it is
+// authenticated with the secret shared by Free-IM-Server and Chat.
+func (w *OrganizationCtl) InternalCheckWSLoginCity(c *gin.Context) {
+	cfg := plugin.ChatCfg()
+	if cfg == nil || !constantTimeSecretEqual(cfg.Share.OpenIM.Secret, c.GetHeader(internalSecretHeader)) {
+		apiresp.GinError(c, toolerrs.NewCodeError(
+			freeErrors.ErrUnauthorized, freeErrors.ErrorMessages[freeErrors.ErrUnauthorized],
+		))
+		return
+	}
+
+	var req svc.CheckWSLoginCityReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+	req.IP = ginUtils.NormalizeIP(req.IP)
+	if req.UserID == "" || req.IP == "" {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+
+	result, err := svc.NewOrganizationUserService().CheckWSLoginCity(c, req)
+	if result != nil && !result.Allowed {
+		// Keep the wire contract fail-closed even if a future service change
+		// accidentally returns a denial without an accompanying code error.
+		if err == nil {
+			err = freeErrors.RemoteLoginCityErr("异地登录已被限制")
+		}
+		// A rejected WS must also lose its chat-side business token. OpenIM
+		// owns/kicks the current IM token; keeping the responsibilities split
+		// avoids Chat attempting to identify the caller's exact platform token.
+		chatUserIDs := result.ChatUserIDs
+		if len(chatUserIDs) == 0 && result.ChatUserID != "" {
+			chatUserIDs = []string{result.ChatUserID}
+		}
+		for _, chatUserID := range chatUserIDs {
+			if _, invalidateErr := plugin.AdminClient().InvalidateToken(c, &adminpb.InvalidateTokenReq{UserID: chatUserID}); invalidateErr != nil {
+				log.ZWarn(c, "failed to invalidate ChatToken after WS city mismatch", invalidateErr, "userID", chatUserID)
+			}
+		}
+		response := apiresp.ParseError(err)
+		response.Data = result
+		c.JSON(http.StatusOK, response)
+		return
+	}
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiresp.GinSuccess(c, result)
 }
 
 // CmsPostUpdateCheckinRuleDescription 更新签到规则说明

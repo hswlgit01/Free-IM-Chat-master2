@@ -16,6 +16,7 @@ import (
 	"github.com/openimsdk/chat/freechat/plugin"
 	chatCache "github.com/openimsdk/chat/freechat/third/chat/cache"
 	chatModel "github.com/openimsdk/chat/freechat/third/chat/model"
+	"github.com/openimsdk/chat/freechat/third/chat/sessiontoken"
 	openImModel "github.com/openimsdk/chat/freechat/third/openIm/model"
 	"github.com/openimsdk/chat/freechat/utils"
 	"github.com/openimsdk/chat/freechat/utils/freeErrors"
@@ -599,12 +600,30 @@ func (a *AccountSvc) EmbedLogin(ctx context.Context, remoteAddr, operationID str
 	// 已绑定登录城市且本次 IP 城市不一致 → 拒绝登录；未绑定则以本次城市绑定(每账号仅一个登录城市)。
 	// 管理员在后台清除绑定后，下次登录以新城市重新绑定。
 	if orgUser.Role == OrgModel.OrganizationUserNormalRole {
-		if err := a.checkAndBindLoginCity(context.TODO(), orgUser.ImServerUserId, req.Ip); err != nil {
+		if err := a.checkAndBindLoginCity(ctx, orgUser.ImServerUserId, orgUser.UserId, req.Ip); err != nil {
 			return nil, err
 		}
 	}
 
-	chatToken, err := plugin.AdminClient().CreateToken(ctx, &admin.CreateTokenReq{UserID: orgUser.UserId, UserType: constant.NormalUser})
+	// Rotate the chat token only after credentials and the city restriction
+	// have both passed. This prevents old ChatTokens from continuing to call
+	// business APIs after a successful H5 login.
+	chatToken, err := sessiontoken.Rotate(
+		ctx,
+		plugin.RedisCli(),
+		orgUser.UserId,
+		func(lockCtx context.Context) error {
+			_, err := plugin.AdminClient().InvalidateToken(lockCtx, &admin.InvalidateTokenReq{UserID: orgUser.UserId})
+			return err
+		},
+		func(lockCtx context.Context) (string, error) {
+			token, err := plugin.AdminClient().CreateToken(lockCtx, &admin.CreateTokenReq{UserID: orgUser.UserId, UserType: constant.NormalUser})
+			if err != nil {
+				return "", err
+			}
+			return token.Token, nil
+		},
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -634,7 +653,7 @@ func (a *AccountSvc) EmbedLogin(ctx context.Context, remoteAddr, operationID str
 
 	response := &EmbedLoginResponse{
 		UserID:         orgUser.ImServerUserId,
-		ChatToken:      chatToken.Token,
+		ChatToken:      chatToken,
 		ImToken:        imToken,
 		OrganizationId: secretReq.OrganizationId,
 	}
@@ -642,6 +661,9 @@ func (a *AccountSvc) EmbedLogin(ctx context.Context, remoteAddr, operationID str
 }
 
 // checkAndBindLoginCity 委托公共实现(与 App 主登录 /chat/login 共用)。
-func (a *AccountSvc) checkAndBindLoginCity(ctx context.Context, imUserID, ip string) error {
-	return chatModel.CheckAndBindLoginCity(ctx, plugin.MongoCli().GetDB(), imUserID, ip)
+func (a *AccountSvc) checkAndBindLoginCity(ctx context.Context, imUserID, accountUserID, ip string) error {
+	_, err := chatModel.CheckAndBindLoginCityWithHistory(
+		ctx, plugin.MongoCli().GetDB(), imUserID, accountUserID, ip,
+	)
+	return err
 }

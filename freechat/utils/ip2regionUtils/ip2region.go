@@ -47,6 +47,12 @@ func GetCityByIP(ip string) string {
 	if host, _, err := net.SplitHostPort(ip); err == nil && host != "" {
 		ip = host
 	}
+	ip = strings.TrimSuffix(strings.TrimPrefix(ip, "["), "]")
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil || !parsedIP.IsGlobalUnicast() || parsedIP.IsPrivate() || parsedIP.IsLoopback() {
+		return ""
+	}
+	ip = parsedIP.String()
 	searcher, err := xdb.NewWithBuffer(Ip2RegionDB)
 	if err != nil {
 		return ""

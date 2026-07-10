@@ -2,6 +2,8 @@ package imapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -197,17 +199,17 @@ func (c *Caller) RegisterUser(ctx context.Context, users []*sdkws.UserInfo) erro
 }
 
 func (c *Caller) ForceOffLine(ctx context.Context, userID string) error {
-	for id := range constantpb.PlatformID2Name {
-		// 跳过H5相关平台，避免参数错误
-		if id == constantpb.H5PlatformID || id == constantpb.H5WebPlatformID {
-			continue
-		}
-		_, _ = forceOffLine.Call(ctx, c.imApi, &auth.ForceLogoutReq{
+	var callErrors []error
+	for id, name := range constantpb.PlatformID2Name {
+		_, err := forceOffLine.Call(ctx, c.imApi, &auth.ForceLogoutReq{
 			PlatformID: int32(id),
 			UserID:     userID,
 		})
+		if err != nil {
+			callErrors = append(callErrors, fmt.Errorf("force logout platform %s(%d): %w", name, id, err))
+		}
 	}
-	return nil
+	return errors.Join(callErrors...)
 }
 func (c *Caller) ForceOffLines(ctx context.Context, data any) error {
 	_, err := forceOffLines.Call(ctx, c.imApi, &data)

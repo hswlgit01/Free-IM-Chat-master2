@@ -305,10 +305,18 @@ func (o *OrganizationUserDao) GetByUserId(ctx context.Context, userId string) (*
 	return mongoutil.FindOne[*OrganizationUser](ctx, o.Collection, bson.M{"user_id": userId})
 }
 
+func (o *OrganizationUserDao) ListByUserId(ctx context.Context, userId string) ([]*OrganizationUser, error) {
+	return mongoutil.Find[*OrganizationUser](ctx, o.Collection, bson.M{"user_id": userId})
+}
+
 // GetByImServerUserId 通过 OpenIM 服务的用户ID查找组织用户
 // 这个方法用于支持客户端传入 OpenIM ID 的场景
 func (o *OrganizationUserDao) GetByImServerUserId(ctx context.Context, imServerUserId string) (*OrganizationUser, error) {
 	return mongoutil.FindOne[*OrganizationUser](ctx, o.Collection, bson.M{"im_server_user_id": imServerUserId})
+}
+
+func (o *OrganizationUserDao) ListByImServerUserId(ctx context.Context, imServerUserId string) ([]*OrganizationUser, error) {
+	return mongoutil.Find[*OrganizationUser](ctx, o.Collection, bson.M{"im_server_user_id": imServerUserId})
 }
 
 func (o *OrganizationUserDao) GetByInvitationCode(ctx context.Context, invitationCode string) (*OrganizationUser, error) {
