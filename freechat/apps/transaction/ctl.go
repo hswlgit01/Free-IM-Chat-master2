@@ -108,8 +108,13 @@ func (ctl *TransactionCtl) ReceiveTransactionStress(c *gin.Context) {
 		apiresp.GinError(c, errs.NewCodeError(freeErrors.ErrInvalidParams, "receiver_id, transaction_id, org_id required"))
 		return
 	}
-	// 压测接口统一标记为「跳过群校验」，单次验证与并发压测走完全相同的业务逻辑
-	ctx := svc2.WithStressSkipGroupCheck(c.Request.Context())
+	// 默认跳过群成员校验（历史行为，保持与既有压测基线可比）。
+	// 带上 X-Stress-Group-Check: 1 则保留群校验，用来量这条路径本身的开销——
+	// 否则群成员校验的成本永远不会出现在压测数字里，而线上是要付的。
+	ctx := c.Request.Context()
+	if c.GetHeader("X-Stress-Group-Check") != "1" {
+		ctx = svc2.WithStressSkipGroupCheck(ctx)
+	}
 	transactionService := svc2.NewTransactionService()
 	amount, err := transactionService.ReceiveTransaction(ctx, &req)
 	if err != nil {

@@ -2,7 +2,6 @@ package svc
 
 import (
 	"context"
-	"time"
 
 	orgModel "github.com/openimsdk/chat/freechat/apps/organization/model"
 	"github.com/openimsdk/chat/freechat/plugin"
@@ -50,91 +49,72 @@ func (v *VerifyService) CheckFriendRelation(ctx context.Context, userID, friendI
 	return nil
 }
 
-// CheckGroupMembership 检查用户是否在群组中
+// CheckGroupMembership 检查用户是否在群组中。
+//
+// 【性能】原来是调 OpenIM 的 /group/get_group_member_user_id 把**整个群的成员 ID 全拉回来**
+// 再线性查找。抢红包时每个人都要跑一次：一个 5000 人的群被 5000 个人抢，
+// 就是 5000 次 HTTP 调用、2500 万个 ID 在网络和 GC 里来回。
+//
+// chat 与 im-server 共用同一个 MongoDB，group_member 上又有 (group_id, user_id) 索引，
+// 所以直接查一条即可，从「拉全量 + O(N) 扫描」变成一次索引命中的单文档读。
 func (v *VerifyService) CheckGroupMembership(ctx context.Context, userID string, groupID string) error {
-	// 获取群成员列表，包含完整日志
-	groupMemberIDs, err := v.getGroupMembers(ctx, userID, groupID)
-	if err != nil {
-		return err
-	}
-
-	// 检查用户是否在群组中
-	for _, memberID := range groupMemberIDs {
-		if memberID == userID {
-			log.ZInfo(ctx, "用户在群组中验证通过", "user_id", userID, "group_id", groupID)
-			return nil
-		}
-	}
-
-	log.ZWarn(ctx, "用户不在群组中", nil, "user_id", userID, "group_id", groupID)
-	return errs.NewCodeError(freeErrors.ErrNotInGroup, freeErrors.ErrorMessages[freeErrors.ErrNotInGroup])
-}
-
-// getGroupMembers 获取群组成员列表（内部方法，用于减少代码冗余）
-func (v *VerifyService) getGroupMembers(ctx context.Context, userID string, groupID string) ([]string, error) {
 	if groupID == "" {
 		log.ZError(ctx, "群组ID为空", nil, "user_id", userID)
-		return nil, errs.NewCodeError(freeErrors.ErrInvalidParams, freeErrors.ErrorMessages[freeErrors.ErrInvalidParams])
+		return errs.NewCodeError(freeErrors.ErrInvalidParams, freeErrors.ErrorMessages[freeErrors.ErrInvalidParams])
 	}
 
-	// 获取IM API调用器
-	imApiCaller := plugin.ImApiCaller()
-	imToken, err := imApiCaller.ImAdminTokenWithDefaultAdmin(ctx)
+	exist, err := openImModel.NewGroupMemberDao(plugin.MongoCli().GetDB()).Exist(ctx, groupID, userID)
 	if err != nil {
-		log.ZError(ctx, "获取IM管理员token失败", err, "user_id", userID, "group_id", groupID)
-		return nil, errs.Wrap(err)
+		log.ZError(ctx, "查询群成员关系失败", err, "user_id", userID, "group_id", groupID)
+		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
 	}
-
-	// 添加超时控制，避免长时间等待
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	// 获取群成员列表
-	groupMemberIDs, err := imApiCaller.GetGroupMemberUserIDs(mctx.WithApiToken(ctxWithTimeout, imToken), groupID)
-	if err != nil {
-		log.ZError(ctx, "获取群成员列表失败", err, "user_id", userID, "group_id", groupID)
-		return nil, errs.Wrap(err)
+	if !exist {
+		log.ZWarn(ctx, "用户不在群组中", nil, "user_id", userID, "group_id", groupID)
+		return errs.NewCodeError(freeErrors.ErrNotInGroup, freeErrors.ErrorMessages[freeErrors.ErrNotInGroup])
 	}
-
-	log.ZDebug(ctx, "获取群成员列表成功", "user_id", userID, "group_id", groupID, "member_count", len(groupMemberIDs))
-	return groupMemberIDs, nil
+	return nil
 }
 
-// VerifyGroupRedPacket 同时验证用户是否在群中，以及红包数量是否合法
-func (v *VerifyService) VerifyGroupRedPacket(ctx context.Context, userID string, groupID string, redPacketCount int) ([]string, error) {
-	// 复用getGroupMembers方法获取群成员列表
-	groupMemberIDs, err := v.getGroupMembers(ctx, userID, groupID)
-	if err != nil {
-		return nil, err
+// VerifyGroupRedPacket 验证发红包的人是否在群中，以及红包个数是否超过群人数。
+//
+// 【性能】原来是把整个群的成员 ID 拉回来，再线性查找 + 取 len()。
+// 现在拆成两次索引查询：一次判断成员关系，一次统计群人数（仅在需要时才统计）。
+// 发红包本身是低频操作，但拉全量成员对大群同样是几万个 ID 的传输，没必要。
+//
+// 返回值去掉了原来的成员列表——唯一的调用方 validateUserRelations 本来就把它丢弃了，
+// 留着只会让人误以为拿到的列表还有别的用途。
+func (v *VerifyService) VerifyGroupRedPacket(ctx context.Context, userID string, groupID string, redPacketCount int) error {
+	if groupID == "" {
+		log.ZError(ctx, "群组ID为空", nil, "user_id", userID)
+		return errs.NewCodeError(freeErrors.ErrInvalidParams, freeErrors.ErrorMessages[freeErrors.ErrInvalidParams])
 	}
+	dao := openImModel.NewGroupMemberDao(plugin.MongoCli().GetDB())
 
 	// 1. 检查用户是否在群中
-	userInGroup := false
-	for _, memberID := range groupMemberIDs {
-		if memberID == userID {
-			userInGroup = true
-			break
-		}
+	exist, err := dao.Exist(ctx, groupID, userID)
+	if err != nil {
+		log.ZError(ctx, "查询群成员关系失败", err, "user_id", userID, "group_id", groupID)
+		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
 	}
-
-	if !userInGroup {
+	if !exist {
 		log.ZWarn(ctx, "用户不在群组中", nil, "user_id", userID, "group_id", groupID)
-		return nil, errs.NewCodeError(freeErrors.ErrNotInGroup, freeErrors.ErrorMessages[freeErrors.ErrNotInGroup])
+		return errs.NewCodeError(freeErrors.ErrNotInGroup, freeErrors.ErrorMessages[freeErrors.ErrNotInGroup])
 	}
 
-	// 2. 如果指定了红包数量，检查红包数量是否合法
+	// 2. 指定了红包个数才需要统计群人数
 	if redPacketCount > 0 {
-		memberCount := len(groupMemberIDs)
-		if redPacketCount > memberCount {
+		memberCount, err := dao.CountByGroupID(ctx, groupID)
+		if err != nil {
+			log.ZError(ctx, "统计群成员数失败", err, "group_id", groupID)
+			return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
+		}
+		if int64(redPacketCount) > memberCount {
 			log.ZWarn(ctx, "红包数量超过群成员数", nil, "group_id", groupID, "red_packet_count", redPacketCount, "member_count", memberCount)
-			return nil, errs.NewCodeError(freeErrors.ErrRedPacketCountExceedGroupMemberCount, freeErrors.ErrorMessages[freeErrors.ErrRedPacketCountExceedGroupMemberCount])
+			return errs.NewCodeError(freeErrors.ErrRedPacketCountExceedGroupMemberCount, freeErrors.ErrorMessages[freeErrors.ErrRedPacketCountExceedGroupMemberCount])
 		}
 		log.ZInfo(ctx, "红包数量验证通过", "user_id", userID, "group_id", groupID, "red_packet_count", redPacketCount, "member_count", memberCount)
-	} else {
-		log.ZInfo(ctx, "用户在群组中验证通过", "user_id", userID, "group_id", groupID)
 	}
-
-	return groupMemberIDs, nil
+	return nil
 }
 
 // CheckOrganizationRelation 检查两个用户是否在同一个组织中
