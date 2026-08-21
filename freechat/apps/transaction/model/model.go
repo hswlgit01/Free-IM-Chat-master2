@@ -248,7 +248,17 @@ func (d *TransactionDao) DecrementRemainingAmountAndCount(ctx context.Context, t
 			// 没有匹配的文档（可能 remaining_count 已经是 0）
 			return false, nil, nil
 		}
-		return false, nil, errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
+		// 【重要】这里必须返回**原始错误**，不能包成 ErrSystem。
+		//
+		// 高并发下多个领取事务会同时 FindOneAndUpdate 同一条 transaction_record，
+		// MongoDB 会返回带 TransientTransactionError 标签的 WriteConflict，
+		// 驱动的 session.WithTransaction 本应据此自动重试。
+		// 一旦用 errs.NewCodeError 重新构造错误，标签就丢了，重试逻辑失效，
+		// 本来只需重试一次的冲突会直接变成用户可见的「系统繁忙」。
+		//
+		// 原先发送者钱包那次写入无意中充当了串行闸门，把并发错开，掩盖了这个问题；
+		// 批量结算去掉那次写入后，这个缺陷才暴露出来。
+		return false, nil, err
 	}
 
 	return true, &updatedDoc, nil
