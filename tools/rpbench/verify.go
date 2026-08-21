@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/shopspring/decimal"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -106,6 +108,13 @@ func runVerify(cfg *Config, args []string) error {
 			tx.TransactionID, tx.TotalCount, received, tx.RemainingCount, tx.Status, notes)
 	}
 
+	// ---- 资金不变式校验 -------------------------------------------------
+	// 批量结算模式下，发送者的 red_packet_frozen_balance 必须恰好等于
+	// 其名下所有「进行中」红包的 (total_amount - settled_amount) 之和。
+	// 这是判断批量结算有没有把钱算错的唯一硬指标。
+	moneyProblems := verifyFrozenInvariant(ctx, db)
+	problems += moneyProblems
+
 	fmt.Println()
 	if problems == 0 {
 		fmt.Println("一致性校验通过，无超发 / 无重复领取 / 计数对得上")
@@ -113,4 +122,87 @@ func runVerify(cfg *Config, args []string) error {
 		fmt.Printf("发现 %d 处一致性问题，见上表\n", problems)
 	}
 	return nil
+}
+
+// verifyFrozenInvariant 校验发送者冻结余额与未结算红包金额是否吻合。
+//
+// 不变式：对每个钱包，
+//   red_packet_frozen_balance == Σ(进行中红包的 total_amount - settled_amount)
+//
+// 当前是逐笔结算：每笔领取都实时扣减冻结余额，settled_amount 不存在，
+// 所以左边应当 <= 右边。左边**大于**右边说明少扣了钱，是真问题；
+// 小于则属正常。这条校验的价值在于兜住「多扣 / 少扣」这类资金错账，
+// 任何动到红包资金流的改动都应该跑一遍。
+func verifyFrozenInvariant(ctx context.Context, db *mongo.Database) int {
+	fmt.Println("\n资金不变式校验（发送者冻结余额 vs 未结算红包）")
+
+	zeroDec, _ := primitive.ParseDecimal128("0")
+	cur, err := db.Collection("transaction_record").Aggregate(ctx, mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{
+			"status":           0, // 进行中
+			"transaction_type": bson.M{"$in": []int{1, 2, 3, 5, 6}},
+		}}},
+		{{Key: "$group", Value: bson.M{
+			"_id":      bson.M{"w": "$wallet_id", "c": "$currency_id"},
+			"total":    bson.M{"$sum": "$total_amount"},
+			"settled":  bson.M{"$sum": bson.M{"$ifNull": []interface{}{"$settled_amount", zeroDec}}},
+			"packets":  bson.M{"$sum": 1},
+		}}},
+	})
+	if err != nil {
+		fmt.Printf("  聚合失败: %v\n", err)
+		return 0
+	}
+	var rows []struct {
+		ID struct {
+			W primitive.ObjectID `bson:"w"`
+			C primitive.ObjectID `bson:"c"`
+		} `bson:"_id"`
+		Total   primitive.Decimal128 `bson:"total"`
+		Settled primitive.Decimal128 `bson:"settled"`
+		Packets int                  `bson:"packets"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		fmt.Printf("  解析失败: %v\n", err)
+		return 0
+	}
+	if len(rows) == 0 {
+		fmt.Println("  没有进行中的红包，跳过")
+		return 0
+	}
+
+	problems := 0
+	for _, r := range rows {
+		var bal struct {
+			Frozen primitive.Decimal128 `bson:"red_packet_frozen_balance"`
+		}
+		if err := db.Collection("wallet_balance").FindOne(ctx,
+			bson.M{"wallet_id": r.ID.W, "currency_id": r.ID.C}).Decode(&bal); err != nil {
+			fmt.Printf("  钱包 %s 余额记录缺失: %v\n", r.ID.W.Hex(), err)
+			problems++
+			continue
+		}
+		total, _ := decimal.NewFromString(r.Total.String())
+		settled, _ := decimal.NewFromString(r.Settled.String())
+		frozen, _ := decimal.NewFromString(bal.Frozen.String())
+		expected := total.Sub(settled) // 应该仍占用在冻结余额里的金额
+
+		status := "OK"
+		switch {
+		case frozen.Equal(expected):
+			// 完全吻合：批量结算模式下的正确状态
+		case frozen.LessThan(expected) && settled.IsZero():
+			status = "逐笔模式（settled 恒为0，冻结已实时扣减）"
+		default:
+			status = fmt.Sprintf("【不符】冻结=%s 应为=%s 差额=%s",
+				frozen.String(), expected.String(), frozen.Sub(expected).String())
+			problems++
+		}
+		fmt.Printf("  钱包 %s  进行中红包 %d 个  总额 %s  已结算 %s  冻结 %s  %s\n",
+			r.ID.W.Hex()[:8], r.Packets, total.String(), settled.String(), frozen.String(), status)
+	}
+	if problems > 0 {
+		fmt.Printf("  发现 %d 处冻结余额不符\n", problems)
+	}
+	return problems
 }

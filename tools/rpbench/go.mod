@@ -2,7 +2,10 @@ module redpacket-stress
 
 go 1.23
 
-require go.mongodb.org/mongo-driver v1.17.1
+require (
+	github.com/shopspring/decimal v1.4.0
+	go.mongodb.org/mongo-driver v1.17.1
+)
 
 require (
 	github.com/golang/snappy v0.0.4 // indirect

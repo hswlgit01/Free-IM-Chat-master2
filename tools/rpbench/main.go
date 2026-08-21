@@ -11,7 +11,7 @@ const usage = `红包压测工具 — 复现「抢红包打爆 MongoDB / 撑爆 
   rpbench prepare [flags]   造数据：选用户池、建压测群、给发送者充值，产出 plan.json
   rpbench bench   [flags]   打压力：发红包 + N 并发抢 + 并行群消息
   rpbench monitor [flags]   采指标：Mongo 写冲突 / WiredTiger 票据 / Kafka lag / 容器 CPU
-  rpbench verify  [flags]   校验一致性：领取记录数、金额合计、超发检查
+  rpbench verify  [flags]   校验一致性 + 资金不变式（冻结余额 vs 未结算红包）
 
 典型流程（都在被测服务器本机跑）：
   ./rpbench prepare -receivers 5000

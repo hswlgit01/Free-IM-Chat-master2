@@ -52,6 +52,7 @@ func runPrepare(cfg *Config, args []string) error {
 		groupID   = fs.String("group-id", "stressgrp001", "压测群 ID（已存在则复用）")
 		topup     = fs.String("topup", "500000", "给发送者钱包补足的可用余额")
 		skipGroup = fs.Bool("skip-group", false, "只造用户池，不建群（群校验压测才需要建群）")
+		senderID  = fs.String("sender-id", "rpbench-sender-001", "压测发送者的 third_user_id；换一个即可造出独立发送者（用于验证发送者钱包是否为热点）")
 	)
 	_ = fs.Parse(args)
 
@@ -122,15 +123,15 @@ func runPrepare(cfg *Config, args []string) error {
 	// 再直接在 Mongo 里给它开钱包充值。只影响这一个账号，不动任何真实用户。
 	httpCli := newHTTPClient(64, 120*time.Second)
 	chatCli := newChatClient(cfg, httpCli)
-	const stressThirdID = "rpbench-sender-001"
-	login, err := chatCli.embedLogin(orgID, org.AesKeyBase64, stressThirdID, "红包压测发送者")
+	stressThirdID := *senderID
+	login, err := chatCli.embedLogin(orgID, org.AesKeyBase64, stressThirdID, "bench_"+stressThirdID[len(stressThirdID)-3:])
 	if err != nil && strings.Contains(err.Error(), "invalid key size") {
 		// 服务端的组织缓存（GetCache）用 json.Marshal 序列化，而 Organization.AesKeyBase64
 		// 带着 json:"-"，所以缓存一命中，服务端拿到的密钥就是空串 → aes 报 invalid key size 0。
 		// 这是被测代码本身的缺陷（见压测报告）。压测流程里先把组织缓存清掉再重试一次。
 		fmt.Println("组织缓存命中导致服务端密钥为空，清缓存后重试...")
 		flushOrgCache()
-		login, err = chatCli.embedLogin(orgID, org.AesKeyBase64, stressThirdID, "红包压测发送者")
+		login, err = chatCli.embedLogin(orgID, org.AesKeyBase64, stressThirdID, "bench_"+stressThirdID[len(stressThirdID)-3:])
 	}
 	if err != nil {
 		return fmt.Errorf("嵌入式登录创建压测发送者失败: %w", err)
@@ -275,7 +276,7 @@ func runPrepare(cfg *Config, args []string) error {
 // 只删缓存键，不动任何业务数据。
 func flushOrgCache() {
 	script := `for _,k in ipairs(redis.call('KEYS','*C_ORG_ID*')) do redis.call('DEL',k) end return 1`
-	out, err := exec.Command("docker", "exec", "redis", "redis-cli", "EVAL", script, "0").CombinedOutput()
+	out, err := exec.Command("docker", "exec", "redis", "redis-cli", "-a", "openIM123", "--no-auth-warning", "EVAL", script, "0").CombinedOutput()
 	if err != nil {
 		fmt.Printf("清组织缓存失败（可手动执行 redis-cli KEYS '*C_ORG_ID*' 删除）: %v %s\n", err, out)
 	}
