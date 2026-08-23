@@ -4,7 +4,7 @@
 
 ## 服务端环境变量
 
-TRTC 密钥只允许注入 Chat 服务端，不得写入 YAML、客户端代码或日志：
+TRTC 密钥只允许注入 Chat 服务端，不得写入 YAML、客户端代码或日志。测试服务器使用 root-only 环境文件 `/data/app/chat/config/trtc.env`：
 
 ```text
 CHATENV_CHAT_RPC_CHAT_RTC_PROVIDER=trtc
@@ -18,7 +18,7 @@ CHATENV_CHAT_RPC_CHAT_RTC_TRTC_SECRETKEY=<SDKSecretKey>
 CHATENV_CHAT_RPC_CHAT_RTC_TOKENTTLSECONDS=3600
 ```
 
-GitHub Actions 部署使用仓库 Secret `TRTC_SDK_APP_ID` 和 `TRTC_SDK_SECRET_KEY`。密钥缺失时，Chat RPC 会在启动阶段失败，避免悄悄回退到错误配置。
+文件权限必须为 `600 root:root`。GitHub Actions 部署通过 Docker `--env-file /data/app/chat/config/trtc.env` 读取服务器上的持久化配置；文件缺失时部署会直接失败，避免创建没有 TRTC 凭证的容器。
 
 ## 接口返回
 
