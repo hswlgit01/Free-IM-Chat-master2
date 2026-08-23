@@ -1,11 +1,12 @@
 package rtc
 
 import (
-	"context"
-	"github.com/openimsdk/chat/freechat/apps/rtc/svc"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/openimsdk/chat/freechat/plugin"
+	"github.com/openimsdk/chat/pkg/common/mctx"
+	chatpb "github.com/openimsdk/chat/pkg/protocol/chat"
 	"github.com/openimsdk/tools/apiresp"
 	"github.com/openimsdk/tools/errs"
 )
@@ -20,12 +21,13 @@ func NewRtcCtl() *RtcCtl {
 
 // PostGetTokenForVideoCall 获取一对一音视频通话的Token
 func (c *RtcCtl) PostGetTokenForVideoCall(ctx *gin.Context) {
-	// 1. 获取当前用户ID并验证权限
-	//opUserID, _, err := mctx.Check(ctx)
-	//if err != nil {
-	//	apiresp.GinError(ctx, err)
-	//	return
-	//}
+	// 1. 获取当前用户ID并验证权限。具体的 IM identity 绑定与凭证签发
+	// 统一交给 Chat RPC，避免 /third 与 /user 两个入口产生不同逻辑。
+	opUserID, userType, err := mctx.Check(ctx)
+	if err != nil {
+		apiresp.GinError(ctx, err)
+		return
+	}
 
 	// 2. 解析请求参数
 	var req struct {
@@ -42,17 +44,12 @@ func (c *RtcCtl) PostGetTokenForVideoCall(ctx *gin.Context) {
 	// 如果有更精细的权限控制需求，例如检查是否在同一房间、是否有通话权限等，应该在此处添加
 	//log.ZInfo(ctx, "用户请求视频通话Token", "requestUser", opUserID, "targetUser", req.Identity, "room", req.Room)
 
-	// 4. 创建RTC服务并获取Token
-	rtcSvc := svc.NewRtcService()
-
-	// 创建请求对象
-	request := &svc.GetTokenForVideoCallRequest{
+	// 4. 复用 /user/rtc/get_token 的同一 Chat RPC 实现。
+	rpcCtx := mctx.WithOpUserID(ctx, opUserID, int(userType))
+	resp, err := plugin.ChatClient().GetTokenForVideoMeeting(rpcCtx, &chatpb.GetTokenForVideoMeetingReq{
 		Room:     req.Room,
 		Identity: req.Identity,
-	}
-
-	// 调用服务获取Token
-	resp, err := rtcSvc.GetTokenForVideoCall(context.Background(), request)
+	})
 	if err != nil {
 		apiresp.GinError(ctx, err)
 		return

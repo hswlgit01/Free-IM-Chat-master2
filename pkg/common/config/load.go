@@ -30,6 +30,22 @@ func loadConfig(path string, envPrefix string, config any) error {
 	v.SetEnvPrefix(envPrefix)
 	v.AutomaticEnv()
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	// Viper's AutomaticEnv does not expose environment-only nested keys to
+	// Unmarshal unless the key also exists in the YAML. Bind the RTC keys so an
+	// older mounted chat-rpc-chat.yml can still receive TRTC credentials without
+	// putting the secret in that file.
+	if filepath.Base(path) == ChatRPCChatCfgFileName {
+		for _, key := range []string{
+			"rtc.provider",
+			"rtc.tokenTTLSeconds",
+			"rtc.trtc.sdkAppID",
+			"rtc.trtc.secretKey",
+		} {
+			if err := v.BindEnv(key); err != nil {
+				return errs.WrapMsg(err, "failed to bind config environment key", "key", key)
+			}
+		}
+	}
 
 	if err := v.ReadInConfig(); err != nil {
 		return errs.WrapMsg(err, "failed to read config file", "path", path, "envPrefix", envPrefix)

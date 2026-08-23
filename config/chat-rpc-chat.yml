@@ -64,6 +64,18 @@ liveKit:
   key: "devkey"
   secret: "secret"
 
+# 一对一语音/视频使用的 RTC 提供方。直播始终继续使用上面的 LiveKit 配置。
+# 测试/生产凭证请通过环境变量注入，不要写入本文件：
+# CHATENV_CHAT_RPC_CHAT_RTC_PROVIDER=trtc
+# CHATENV_CHAT_RPC_CHAT_RTC_TRTC_SDKAPPID=<SDKAppID>
+# CHATENV_CHAT_RPC_CHAT_RTC_TRTC_SECRETKEY=<SDKSecretKey>
+rtc:
+  provider: "livekit"
+  tokenTTLSeconds: 3600
+  trtc:
+    sdkAppID: 0
+    secretKey: ""
+
 # 直播录制对象存储相关
 liveKitRecord:
   aws:

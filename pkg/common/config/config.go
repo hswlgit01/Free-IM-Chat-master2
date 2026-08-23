@@ -156,6 +156,14 @@ type Chat struct {
 		Key        string   `mapstructure:"key"`
 		Secret     string   `mapstructure:"secret"`
 	} `mapstructure:"liveKit"`
+	RTC struct {
+		Provider        string `mapstructure:"provider"`
+		TokenTTLSeconds int    `mapstructure:"tokenTTLSeconds"`
+		TRTC            struct {
+			SDKAppID  int    `mapstructure:"sdkAppID"`
+			SecretKey string `mapstructure:"secretKey"`
+		} `mapstructure:"trtc"`
+	} `mapstructure:"rtc"`
 	AllowRegister bool `mapstructure:"allowRegister"`
 
 	LiveKitRecord struct {

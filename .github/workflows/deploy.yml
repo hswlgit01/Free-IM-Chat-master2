@@ -47,6 +47,9 @@ jobs:
             rm -f /root/deploy/freechat-chat.tar.gz
             docker run -d --name freechat-chat \
               --network host --restart unless-stopped \
+              -e CHATENV_CHAT_RPC_CHAT_RTC_PROVIDER=trtc \
+              -e CHATENV_CHAT_RPC_CHAT_RTC_TRTC_SDKAPPID='${{ secrets.TRTC_SDK_APP_ID }}' \
+              -e CHATENV_CHAT_RPC_CHAT_RTC_TRTC_SECRETKEY='${{ secrets.TRTC_SDK_SECRET_KEY }}' \
               -v /data/app/chat/config:/im-chat/config \
               -v /data/logs/chat:/im-chat/_output/logs \
               freechat-chat:latest

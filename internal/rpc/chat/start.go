@@ -110,7 +110,30 @@ func Start(ctx context.Context, config *Config, client discovery.SvcDiscoveryReg
 	srv.mongoDB = mgocli.GetDB()
 
 	srv.rpcChatConf = config.RpcConfig
-	srv.Livekit = rtc.NewLiveKit(config.RpcConfig.LiveKit.Key, config.RpcConfig.LiveKit.Secret, config.RpcConfig.LiveKit.URL)
+	srv.RTCProvider = rtc.Provider(strings.ToLower(strings.TrimSpace(config.RpcConfig.RTC.Provider)))
+	if srv.RTCProvider == "" {
+		srv.RTCProvider = rtc.ProviderLiveKit
+	}
+	srv.RTCTokenTTL = time.Duration(config.RpcConfig.RTC.TokenTTLSeconds) * time.Second
+	if srv.RTCTokenTTL <= 0 {
+		srv.RTCTokenTTL = time.Hour
+	}
+	switch srv.RTCProvider {
+	case rtc.ProviderLiveKit:
+		// The client-routable LiveKit URL is selected per request, so its
+		// issuer is created after URL discovery in rtc.go.
+	case rtc.ProviderTRTC:
+		srv.RTCIssuer, err = rtc.NewTRTC(
+			config.RpcConfig.RTC.TRTC.SDKAppID,
+			config.RpcConfig.RTC.TRTC.SecretKey,
+			srv.RTCTokenTTL,
+		)
+		if err != nil {
+			return errs.WrapMsg(err, "initialize TRTC credential issuer")
+		}
+	default:
+		return errs.New("unsupported RTC provider: " + string(srv.RTCProvider))
+	}
 	srv.AllowRegister = config.RpcConfig.AllowRegister
 	chat.RegisterChatServer(server, &srv)
 	return nil
@@ -126,11 +149,13 @@ type chatSvr struct {
 	SMS              sms.SMS
 	Mail             email.Mail
 	Code             verifyCode
-	Livekit          *rtc.LiveKit
+	RTCProvider      rtc.Provider
+	RTCIssuer        rtc.Issuer
+	RTCTokenTTL      time.Duration
 	ChatAdminUserID  string
 	AllowRegister    bool
 	LoginRecordCache *chatCache.LoginRecordCacheRedis // 新增登录记录缓存字段
-	mongoDB          *mongo.Database                 // 异地登录城市绑定
+	mongoDB          *mongo.Database                  // 异地登录城市绑定
 }
 
 func (o *chatSvr) WithAdminUser(ctx context.Context) context.Context {
