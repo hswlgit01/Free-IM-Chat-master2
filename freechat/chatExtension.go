@@ -194,24 +194,48 @@ func ensureSlowQueryIndexes() {
 	if db == nil {
 		return
 	}
-	bg := options.Index().SetBackground(true)
 	type idx struct {
-		coll string
-		keys bson.D
+		coll   string
+		keys   bson.D
+		unique bool
 	}
 	items := []idx{
-		{"attribute", bson.D{{Key: "user_id", Value: 1}}},
-		{"attribute", bson.D{{Key: "is_real_name_verified", Value: 1}, {Key: "user_id", Value: 1}}},
-		{"transaction_record", bson.D{{Key: "org_id", Value: 1}, {Key: "transaction_type", Value: 1}}},
-		{"operation_log", bson.D{{Key: "org_id", Value: 1}, {Key: "operation_time", Value: -1}}},
-		{"checkin", bson.D{{Key: "org_id", Value: 1}, {Key: "date", Value: 1}, {Key: "im_server_user_id", Value: 1}}},
-		{"organization_user", bson.D{{Key: "organization_id", Value: 1}, {Key: "role", Value: 1}}},
+		{coll: "attribute", keys: bson.D{{Key: "user_id", Value: 1}}},
+		{coll: "attribute", keys: bson.D{{Key: "is_real_name_verified", Value: 1}, {Key: "user_id", Value: 1}}},
+		{coll: "transaction_record", keys: bson.D{{Key: "org_id", Value: 1}, {Key: "transaction_type", Value: 1}}},
+		{coll: "operation_log", keys: bson.D{{Key: "org_id", Value: 1}, {Key: "operation_time", Value: -1}}},
+		{coll: "checkin", keys: bson.D{{Key: "org_id", Value: 1}, {Key: "date", Value: 1}, {Key: "im_server_user_id", Value: 1}}},
+		{coll: "organization_user", keys: bson.D{{Key: "organization_id", Value: 1}, {Key: "role", Value: 1}}},
+
+		// dawn 2026-08-20 红包压测补齐：以下索引在 model 层的 CreateXxxIndex 里早就声明了，
+		// 但 createDatabaseIndex 整段被禁用，实际数据库里一直没有，导致抢红包路径上
+		// 每一次单文档查询都是全表扫描：
+		//   transaction_record        6.5K 文档，GetByTransactionID 每次抢包都查      → 实测 134~147ms
+		//   transaction_receive_record 194K 文档，判重/计数都扫全表                    → 实测 112~114ms
+		//   wallet_info               15.6K 文档，每次抢包查钱包                       → 实测 367ms
+		// 放在这里而不是恢复 createDatabaseIndex，是因为本函数已经是「后台构建 + 失败只告警
+		// + 异步不阻塞启动」的安全写法；createDatabaseIndex 当初正是因为一个索引失败就
+		// 中断启动才被整段停掉的。
+		//
+		// 唯一索引若因历史重复数据建不起来，这里只会告警，不影响服务启动，
+		// 需要人工清理重复数据后重启即可生效。
+		{coll: "transaction_record", keys: bson.D{{Key: "transaction_id", Value: 1}}, unique: true},
+		{coll: "transaction_record", keys: bson.D{{Key: "sender_id", Value: 1}}},
+		{coll: "transaction_record", keys: bson.D{{Key: "status", Value: 1}}},
+		{coll: "transaction_receive_record", keys: bson.D{{Key: "transaction_id", Value: 1}, {Key: "user_id", Value: 1}}, unique: true},
+		{coll: "transaction_receive_record", keys: bson.D{{Key: "received_at", Value: 1}}},
+		{coll: "wallet_info", keys: bson.D{{Key: "owner_id", Value: 1}, {Key: "owner_type", Value: 1}}},
+		{coll: "wallet_balance", keys: bson.D{{Key: "wallet_id", Value: 1}, {Key: "currency_id", Value: 1}}},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	for _, it := range items {
-		if _, err := db.Collection(it.coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: it.keys, Options: bg}); err != nil {
-			log.ZWarn(ctx, "ensureSlowQueryIndexes: create index failed (non-fatal)", err, "coll", it.coll, "keys", it.keys)
+		opts := options.Index().SetBackground(true)
+		if it.unique {
+			opts = opts.SetUnique(true)
+		}
+		if _, err := db.Collection(it.coll).Indexes().CreateOne(ctx, mongo.IndexModel{Keys: it.keys, Options: opts}); err != nil {
+			log.ZWarn(ctx, "ensureSlowQueryIndexes: create index failed (non-fatal)", err, "coll", it.coll, "keys", it.keys, "unique", it.unique)
 		}
 	}
 	log.ZInfo(ctx, "ensureSlowQueryIndexes done")

@@ -310,7 +310,7 @@ func (t *TransactionService) validateUserRelations(ctx context.Context, req *dto
 			return err
 		}
 		// 验证用户在群中和红包数量合法性
-		_, err := verify.VerifyGroupRedPacket(ctx, senderImID, req.TargetID, req.TotalCount)
+		err := verify.VerifyGroupRedPacket(ctx, senderImID, req.TargetID, req.TotalCount)
 		if err != nil {
 			return err
 		}
@@ -1042,6 +1042,18 @@ type ReceiveTransactionContext struct {
 	CurrencyPrecision   int32
 	ImServerUserID      string
 	WalletInfo          *walletModel.WalletInfo
+
+	// UpdatedTransaction 是 DecrementRemainingAmountAndCount 递减之后的最新交易文档。
+	// 有了它，事务提交后回写 Redis 就不必再查一次库。
+	UpdatedTransaction *model.Transaction
+
+	// PrefetchedTransaction 是 ProcessReceiveTransaction 在预留名额之前
+	// 已经查出来的交易文档。ValidateTransactionStatus 复用它，避免一个请求里
+	// 把同一条 transaction_record 查两遍。
+	//
+	// 注意这里刻意不直接写 Transaction 字段：processWithReservation 顶部的
+	// isLuckyPacket 依赖 Transaction 此刻仍为 nil，提前赋值会改变分支走向。
+	PrefetchedTransaction *model.Transaction
 }
 
 // LuaScriptResult Lua脚本执行结果
@@ -1804,13 +1816,17 @@ func (v *ReceiveTransactionValidator) ValidateBasicParams(ctx context.Context, r
 
 // ValidateTransactionStatus 验证交易状态
 func (v *ReceiveTransactionValidator) ValidateTransactionStatus(ctx context.Context, rtCtx *ReceiveTransactionContext) error {
-	transactionDao := model.NewTransactionDao(v.mongoDB)
-
-	// 根据交易ID获取交易记录
-	transaction, err := transactionDao.GetByTransactionID(ctx, rtCtx.Req.TransactionID)
-	if err != nil {
-		log.ZError(ctx, "获取交易记录失败", err, "receiver_id", rtCtx.Req.ReceiverID, "transaction_id", rtCtx.Req.TransactionID)
-		return errs.Wrap(err)
+	// 【性能】调用方在预留名额之前已经查过一次同一条 transaction_record，
+	// 这里直接复用，一个请求少查一次库（实测该集合平均 140ms/次）。
+	transaction := rtCtx.PrefetchedTransaction
+	if transaction == nil {
+		transactionDao := model.NewTransactionDao(v.mongoDB)
+		var err error
+		transaction, err = transactionDao.GetByTransactionID(ctx, rtCtx.Req.TransactionID)
+		if err != nil {
+			log.ZError(ctx, "获取交易记录失败", err, "receiver_id", rtCtx.Req.ReceiverID, "transaction_id", rtCtx.Req.TransactionID)
+			return errs.Wrap(err)
+		}
 	}
 
 	if transaction == nil {
@@ -1888,9 +1904,14 @@ func (v *ReceiveTransactionValidator) ValidateReceiverInfo(ctx context.Context, 
 	}
 
 	// 3. 获取发送者的组织用户信息
-	senderOrgUser, err := orgUserDao.GetByUserIdAndOrgID(ctx, rtCtx.Transaction.SenderID, rtCtx.Transaction.OrgID)
+	// 【性能】同一个红包的所有抢包人查的都是这同一条记录，走短 TTL 缓存。详见 senderOrgCache.go。
+	senderOrgUser, err := getSenderOrgUserCached(ctx, v.mongoDB, rtCtx.Transaction.SenderID, rtCtx.Transaction.OrgID)
 	if err != nil {
 		log.ZError(ctx, "获取发送者组织用户信息失败", err, "sender_id", rtCtx.Transaction.SenderID, "org_id", rtCtx.Transaction.OrgID)
+		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
+	}
+	if senderOrgUser == nil {
+		log.ZError(ctx, "发送者组织用户信息不存在", nil, "sender_id", rtCtx.Transaction.SenderID, "org_id", rtCtx.Transaction.OrgID)
 		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
 	}
 
@@ -1992,24 +2013,25 @@ func (v *ReceiveTransactionValidator) ValidateReceiverInfo(ctx context.Context, 
 }
 
 // ValidateWalletStatus 验证钱包状态
+//
+// 【性能】原来先 ExistByOwnerIdAndOwnerType(COUNT) 判断钱包开没开，再
+// GetByOwnerIdAndOwnerType(FIND_ONE) 取同一个文档——两次查询用的是完全相同的
+// 过滤条件。压测实测这两次读占到每次抢红包 1.5 次 Mongo 操作、平均 108ms + 367ms。
+// 取一次就够了：取不到就是没开通。
 func (v *ReceiveTransactionValidator) ValidateWalletStatus(ctx context.Context, rtCtx *ReceiveTransactionContext) error {
 	walletInfoDao := walletModel.NewWalletInfoDao(v.mongoDB)
 
-	// 检查接收者钱包是否已开启
-	isOpen, err := walletInfoDao.ExistByOwnerIdAndOwnerType(ctx, rtCtx.Req.ReceiverID, walletModel.WalletInfoOwnerTypeOrdinary)
-	if !isOpen {
-		if dbutil.IsDBNotFound(err) {
-			log.ZWarn(ctx, "接收者钱包未开启", nil, "receiver_id", rtCtx.Req.ReceiverID)
-			return errs.NewCodeError(freeErrors.WalletNotOpenCode, freeErrors.ErrorMessages[freeErrors.WalletNotOpenCode])
-		}
-		log.ZError(ctx, "获取接收者钱包信息失败", err, "receiver_id", rtCtx.Req.ReceiverID)
-		return errs.NewCodeError(freeErrors.WalletNotOpenCode, freeErrors.ErrorMessages[freeErrors.WalletNotOpenCode])
-	}
-
-	// 获取钱包信息并设置到上下文
 	walletInfo, err := walletInfoDao.GetByOwnerIdAndOwnerType(ctx, rtCtx.Req.ReceiverID, walletModel.WalletInfoOwnerTypeOrdinary)
 	if err != nil {
-		log.ZError(ctx, "获取接收者钱包信息失败", err, "receiver_id", rtCtx.Req.ReceiverID)
+		if dbutil.IsDBNotFound(err) {
+			log.ZWarn(ctx, "接收者钱包未开启", nil, "receiver_id", rtCtx.Req.ReceiverID)
+		} else {
+			log.ZError(ctx, "获取接收者钱包信息失败", err, "receiver_id", rtCtx.Req.ReceiverID)
+		}
+		return errs.NewCodeError(freeErrors.WalletNotOpenCode, freeErrors.ErrorMessages[freeErrors.WalletNotOpenCode])
+	}
+	if walletInfo == nil {
+		log.ZWarn(ctx, "接收者钱包未开启", nil, "receiver_id", rtCtx.Req.ReceiverID)
 		return errs.NewCodeError(freeErrors.WalletNotOpenCode, freeErrors.ErrorMessages[freeErrors.WalletNotOpenCode])
 	}
 
@@ -2018,12 +2040,16 @@ func (v *ReceiveTransactionValidator) ValidateWalletStatus(ctx context.Context, 
 }
 
 // ValidateCurrencyPrecision 验证币种精度
+//
+// 【性能】币种是静态配置，走进程内缓存，不再每次抢红包都查库。详见 currencyCache.go。
 func (v *ReceiveTransactionValidator) ValidateCurrencyPrecision(ctx context.Context, rtCtx *ReceiveTransactionContext) error {
-	walletCurrencyDao := walletModel.NewWalletCurrencyDao(v.mongoDB)
-
-	walletCurrency, err := walletCurrencyDao.GetById(ctx, rtCtx.Transaction.CurrencyId)
+	walletCurrency, err := getCurrencyCached(ctx, v.mongoDB, rtCtx.Transaction.CurrencyId)
 	if err != nil {
 		log.ZError(ctx, "获取币种精度失败", err, "transaction_id", rtCtx.Req.TransactionID, "receiver_id", rtCtx.Req.ReceiverID, "currency_id", rtCtx.Transaction.CurrencyId)
+		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
+	}
+	if walletCurrency == nil {
+		log.ZError(ctx, "币种不存在", nil, "transaction_id", rtCtx.Req.TransactionID, "currency_id", rtCtx.Transaction.CurrencyId)
 		return errs.NewCodeError(freeErrors.ErrSystem, freeErrors.ErrorMessages[freeErrors.ErrSystem])
 	}
 
@@ -2244,7 +2270,7 @@ func (d *ReceiveTransactionDBProcessor) ProcessDBTransaction(ctx context.Context
 		}
 
 		// 使用原子递减（$inc）更新，而不是 $set
-		success, newRemainingCount, err := d.transactionDao.DecrementRemainingAmountAndCount(sessCtx, rtCtx.Req.TransactionID, amountDecrement128)
+		success, updatedTransaction, err := d.transactionDao.DecrementRemainingAmountAndCount(sessCtx, rtCtx.Req.TransactionID, amountDecrement128)
 		if err != nil {
 			log.ZError(sessCtx, "原子递减交易剩余金额和个数失败", err, "transaction_id", rtCtx.Req.TransactionID)
 			return nil, err
@@ -2258,6 +2284,14 @@ func (d *ReceiveTransactionDBProcessor) ProcessDBTransaction(ctx context.Context
 			// 检查是否应该标记为完成
 		}
 
+		// 【性能】把递减后的最新文档挂到上下文上，供调用方回写 Redis 用，
+		// 免得事务提交后再 GetByTransactionID 查一次同样的数据。
+		newRemainingCount := 0
+		if updatedTransaction != nil {
+			newRemainingCount = updatedTransaction.RemainingCount
+			rtCtx.UpdatedTransaction = updatedTransaction
+		}
+
 		// 如果递减后剩余数量为 0，更新交易状态为完成
 		if newRemainingCount == 0 {
 			if err := d.transactionDao.UpdateTransactionComplete(sessCtx, rtCtx.Req.TransactionID); err != nil {
@@ -2265,6 +2299,15 @@ func (d *ReceiveTransactionDBProcessor) ProcessDBTransaction(ctx context.Context
 				// 不返回错误，因为领取已经成功
 			} else {
 				log.ZInfo(sessCtx, "交易已完成，剩余个数为0", "transaction_id", rtCtx.Req.TransactionID)
+				// UpdateTransactionComplete 会把剩余金额/个数归零。原先事务后那次回查
+				// 读到的就是归零后的值，这里同步修正挂在上下文上的文档，保持行为一致。
+				if rtCtx.UpdatedTransaction != nil {
+					if zero, zeroErr := primitive.ParseDecimal128("0"); zeroErr == nil {
+						rtCtx.UpdatedTransaction.RemainingAmount = zero
+					}
+					rtCtx.UpdatedTransaction.RemainingCount = 0
+					rtCtx.UpdatedTransaction.Status = model.TransactionStatusComplete
+				}
 			}
 		}
 
@@ -3057,13 +3100,9 @@ func (m *ReceiveTransactionManagerV2) ProcessReceiveTransaction(ctx context.Cont
 	if err != nil {
 		log.ZWarn(ctx, "从MongoDB获取交易信息失败", err, "transaction_id", req.TransactionID)
 	} else if transaction != nil {
-		// 【性能优化】只查询计数而不是获取全部记录
-		actualReceivedCount, recErr := receiveRecordDao.CountByTransactionID(ctx, req.TransactionID)
-		if recErr == nil && int(actualReceivedCount) >= transaction.TotalCount {
-			log.ZInfo(ctx, "红包已领完（基于实际领取记录）", "transaction_id", req.TransactionID,
-				"total_count", transaction.TotalCount, "actual_received", actualReceivedCount)
-			return "", errs.NewCodeError(freeErrors.ErrNoRemaining, freeErrors.ErrorMessages[freeErrors.ErrNoRemaining])
-		}
+		// 【性能】把这次查到的文档带下去，ValidateTransactionStatus 复用它，
+		// 免得同一个请求把 transaction_record 查两遍。
+		rtCtx.PrefetchedTransaction = transaction
 
 		// 检查交易状态
 		if transaction.Status == model.TransactionStatusComplete {
@@ -3075,12 +3114,31 @@ func (m *ReceiveTransactionManagerV2) ProcessReceiveTransaction(ctx context.Cont
 			return "", errs.NewCodeError(freeErrors.ErrTransactionExpired, freeErrors.ErrorMessages[freeErrors.ErrTransactionExpired])
 		}
 
-		// 【增强】基于实际领取数计算真实剩余数量
-		trueRemainingCount := transaction.TotalCount - int(actualReceivedCount)
+		// 【性能】原来每次抢包都 CountByTransactionID 数一遍领取记录，
+		// 这是一个随已领取数增长的 O(N) 扫描，N 个人抢就是 O(N²)。
+		//
+		// remaining_count 由 $inc 原子维护，正常情况下
+		//   TotalCount - RemainingCount == 实际领取数
+		// 所以公共路径直接信任文档；只有在文档显示「已经领完」时，
+		// 才真去数一遍记录做确认——也就是只在**要拒绝用户**的那一刻才付这个代价。
+		// 反方向的漂移（文档说还有、实际已领完）由下游兜住：
+		// Redis 预留是原子的，DB 递减带 remaining_count > 0 条件，
+		// 领取记录还有 (transaction_id, user_id) 唯一索引。
+		trueRemainingCount := transaction.RemainingCount
 		if trueRemainingCount <= 0 {
-			log.ZInfo(ctx, "红包已无剩余（基于实际领取记录）", "transaction_id", req.TransactionID,
-				"true_remaining", trueRemainingCount)
-			return "", errs.NewCodeError(freeErrors.ErrNoRemaining, freeErrors.ErrorMessages[freeErrors.ErrNoRemaining])
+			actualReceivedCount, recErr := receiveRecordDao.CountByTransactionID(ctx, req.TransactionID)
+			if recErr != nil {
+				log.ZWarn(ctx, "确认领取记录数失败，按文档剩余数处理", recErr, "transaction_id", req.TransactionID)
+			} else {
+				trueRemainingCount = transaction.TotalCount - int(actualReceivedCount)
+			}
+			if trueRemainingCount <= 0 {
+				log.ZInfo(ctx, "红包已无剩余（已与领取记录核对）", "transaction_id", req.TransactionID,
+					"true_remaining", trueRemainingCount, "db_remaining", transaction.RemainingCount)
+				return "", errs.NewCodeError(freeErrors.ErrNoRemaining, freeErrors.ErrorMessages[freeErrors.ErrNoRemaining])
+			}
+			log.ZWarn(ctx, "文档剩余数为0但领取记录显示仍有剩余，继续处理", nil,
+				"transaction_id", req.TransactionID, "true_remaining", trueRemainingCount)
 		}
 
 		// 【增强】智能修复Redis计数器
@@ -3672,42 +3730,55 @@ func (m *ReceiveTransactionManagerV2) processWithDistributedLock(ctx context.Con
 // processWithReservation 使用预留机制处理交易（优化模式）
 func (m *ReceiveTransactionManagerV2) processWithReservation(ctx context.Context, extCtx *ReceiveTransactionContextExtended) (string, error) {
 	rtCtx := extCtx.ReceiveTransactionContext
-	isLuckyPacket := rtCtx.Transaction != nil && rtCtx.Transaction.TransactionType == model.TransactionTypeLuckyPacket
 
 	log.ZInfo(ctx, "使用预留模式处理交易",
 		"transaction_id", rtCtx.Req.TransactionID,
 		"receiver_id", rtCtx.Req.ReceiverID,
-		"reservation_id", extCtx.ReservationID,
-		"is_lucky_packet", isLuckyPacket)
+		"reservation_id", extCtx.ReservationID)
+
+	// 【时序修复 dawn 2026-08-21】
+	// 原来在函数开头就算 isLuckyPacket，读的是 rtCtx.Transaction——
+	// 但这个字段全代码只有 ValidateTransactionStatus 会赋值，而那是下面几行才调用的。
+	// 也就是说 isLuckyPacket 恒为 false，拼手气红包一直走的是「非拼手气」分支，
+	// 下面那套专门为它写的幂等/重试/补偿逻辑从未执行过。
+	// （实测佐证：transaction_type=3 的红包，日志里 is_lucky_packet 全是 false。）
+	//
+	// 修法是把判断挪到校验之后、真正需要分支的地方，而不是在开头提前算。
+	// 沿途那几处 `if isLuckyPacket { CancelReservation }` 一并删掉：
+	// 外层调用方在 processWithReservation 返回错误时本来就会无条件取消预留，
+	// 保留它们只会在修复时序后变成双重取消。
+	//
+	// 判断结果不再是「拼手气」时的行为完全不变。
 
 	// 验证交易状态（这里不需要锁，因为已经通过预留机制保证了原子性）
 	if err := m.validator.ValidateTransactionStatus(ctx, rtCtx); err != nil {
-		if isLuckyPacket {
-			m.slotManager.CancelReservation(ctx, rtCtx.Req.TransactionID, rtCtx.Req.ReceiverID, extCtx.ReservationID)
-		}
 		return "", err
 	}
 
 	if err := m.validator.ValidateReceiverInfo(ctx, rtCtx); err != nil {
-		if isLuckyPacket {
-			m.slotManager.CancelReservation(ctx, rtCtx.Req.TransactionID, rtCtx.Req.ReceiverID, extCtx.ReservationID)
-		}
 		return "", err
 	}
 	if err := m.validator.ValidateWalletStatus(ctx, rtCtx); err != nil {
-		if isLuckyPacket {
-			m.slotManager.CancelReservation(ctx, rtCtx.Req.TransactionID, rtCtx.Req.ReceiverID, extCtx.ReservationID)
-		}
 		return "", err
 	}
 
 	// 验证币种精度
 	if err := m.validator.ValidateCurrencyPrecision(ctx, rtCtx); err != nil {
-		if isLuckyPacket {
-			m.slotManager.CancelReservation(ctx, rtCtx.Req.TransactionID, rtCtx.Req.ReceiverID, extCtx.ReservationID)
-		}
 		return "", err
 	}
+
+	// 到这里 rtCtx.Transaction 才由 ValidateTransactionStatus 填好，判断才是准的
+	isLuckyPacket := luckyPacketPathEnabled() &&
+		rtCtx.Transaction != nil && rtCtx.Transaction.TransactionType == model.TransactionTypeLuckyPacket
+	log.ZInfo(ctx, "预留模式分支判定",
+		"transaction_id", rtCtx.Req.TransactionID,
+		"transaction_type", func() int {
+			if rtCtx.Transaction == nil {
+				return -1
+			}
+			return rtCtx.Transaction.TransactionType
+		}(),
+		"is_lucky_packet", isLuckyPacket)
 
 	// 初始化Redis键名
 	m.redisProcessor.InitializeKeys(rtCtx)
@@ -3715,9 +3786,6 @@ func (m *ReceiveTransactionManagerV2) processWithReservation(ctx context.Context
 	// 处理Redis交易逻辑
 	result, err := m.redisProcessor.ProcessTransaction(ctx, rtCtx)
 	if err != nil {
-		if isLuckyPacket {
-			m.slotManager.CancelReservation(ctx, rtCtx.Req.TransactionID, rtCtx.Req.ReceiverID, extCtx.ReservationID)
-		}
 		return "", err
 	}
 	amount := result.ReceiveAmount
@@ -3792,14 +3860,23 @@ func (m *ReceiveTransactionManagerV2) processWithReservation(ctx context.Context
 	}
 
 	// 只进行安全性检查，避免过度同步导致问题
-	// 从MongoDB读取最新的剩余数量
-	transactionDao := model.NewTransactionDao(m.dbProcessor.mongoDB)
-	transaction, err := transactionDao.GetByTransactionID(ctx, rtCtx.Req.TransactionID)
-	if err != nil {
-		log.ZWarn(ctx, "数据库处理后无法获取最新交易信息", err,
-			"transaction_id", rtCtx.Req.TransactionID,
-			"receiver_id", rtCtx.Req.ReceiverID)
-		return amount, nil
+	//
+	// 【性能】这里原来会再 GetByTransactionID 查一次库拿最新剩余数量。
+	// 但 DecrementRemainingAmountAndCount 内部用的是 FindOneAndUpdate + ReturnDocument=After，
+	// 递减完的最新文档本来就已经在手上了（挂在 rtCtx.UpdatedTransaction）。
+	// 压测实测这次多余的回查占 transaction_record 读取量的近一半，平均 147ms/次，直接去掉。
+	transaction := rtCtx.UpdatedTransaction
+	if transaction == nil {
+		// 兜底：拼手气红包的重试分支等路径可能没走到递减，退回查库一次
+		transactionDao := model.NewTransactionDao(m.dbProcessor.mongoDB)
+		var err error
+		transaction, err = transactionDao.GetByTransactionID(ctx, rtCtx.Req.TransactionID)
+		if err != nil {
+			log.ZWarn(ctx, "数据库处理后无法获取最新交易信息", err,
+				"transaction_id", rtCtx.Req.TransactionID,
+				"receiver_id", rtCtx.Req.ReceiverID)
+			return amount, nil
+		}
 	}
 
 	if transaction != nil {

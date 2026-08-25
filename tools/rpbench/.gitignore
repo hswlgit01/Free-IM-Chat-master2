@@ -1,0 +1,4 @@
+out/
+results/*.csv
+rpbench-linux-amd64
+redpacket-stress
