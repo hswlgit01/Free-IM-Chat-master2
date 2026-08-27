@@ -727,6 +727,17 @@ func registerDepAdminRouter(router *gin.Engine) {
 		orgWalletApi.POST("/update",
 			chatMiddleware.CheckToken, depmw.CheckOrganization(), depmw.DecryptMiddleware(), organizationCtl.PostUpdateOrganizationWallet) // 修改当前组织钱包密码
 
+		// 后台手动调节用户可用余额。
+		// 权限刻意收紧到 SuperAdmin / BackendAdmin —— GroupManager（管理员）与
+		// TermManager（团队长）是业务角色，不应直接改动用户的钱。
+		orgWalletApi.POST("/adjust_user_balance",
+			chatMiddleware.CheckToken,
+			depmw.CheckOrganization(
+				organizationModel.OrganizationUserSuperAdminRole,
+				organizationModel.OrganizationUserBackendAdminRole,
+			),
+			walletCtl.PostAdjustUserBalance)
+
 		// 补偿金系统设置
 		compensationAdminSvc := walletSvc.NewCompensationAdminService()
 		compensationGroup := orgWalletApi.Group("/compensation")
@@ -1176,6 +1187,23 @@ func RegisterChatExtension(cfg *plugin.ChatConfig,
 	// dawn 2026-07-02 慢查询索引自愈：异步补齐关键缺失索引(attribute.user_id 等)，
 	// 后台构建、失败只告警不 panic，不阻塞启动。幂等，线上已存在则跳过。
 	go ensureSlowQueryIndexes()
+
+	// 后台调节余额的幂等键唯一索引。失败只告警不阻塞启动；
+	// 索引建不起来时幂等退化为「先查一次」的弱保证，仍会记录告警便于发现。
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.ZWarn(context.Background(), "创建余额调节幂等索引 panic(已恢复)", fmt.Errorf("%v", r))
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if db := plugin.MongoCli().GetDB(); db != nil {
+			if err := walletSvc.EnsureAdjustIndex(ctx, db); err != nil {
+				log.ZWarn(ctx, "创建余额调节幂等索引失败(非致命)", err)
+			}
+		}
+	}()
 
 	// 初始化通知账户
 	initNotificationAccount(imApiCaller)

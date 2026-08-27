@@ -13,6 +13,9 @@ import (
 	"github.com/openimsdk/chat/freechat/utils/paginationUtils"
 	"github.com/openimsdk/chat/pkg/common/mctx"
 	"github.com/openimsdk/tools/apiresp"
+	"github.com/openimsdk/tools/errs"
+	"github.com/shopspring/decimal"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type WalletCtl struct{}
@@ -249,6 +252,66 @@ func (w *DepAdminWalletCtl) GetOrgBalance(c *gin.Context) {
 		return
 	}
 	apiresp.GinSuccess(c, resp)
+}
+
+// AdjustUserBalanceReq 后台手动调节用户余额的请求体。
+type AdjustUserBalanceReq struct {
+	// TargetUserID 被调整用户的 organization_user.user_id
+	TargetUserID string `json:"targetUserId" binding:"required"`
+	// CurrencyID 币种 ID
+	CurrencyID string `json:"currencyId" binding:"required"`
+	// Amount 调整金额，字符串传递避免浮点精度丢失。正数增加，负数扣减。
+	Amount string `json:"amount" binding:"required"`
+	// Reason 调整原因，必填，会写入用户账单备注
+	Reason string `json:"reason" binding:"required"`
+	// RequestID 幂等键，同一个只生效一次。前端每次打开弹窗生成一个 UUID 即可，
+	// 提交失败重试时沿用同一个，避免网络重试导致重复加钱。
+	RequestID string `json:"requestId" binding:"required"`
+}
+
+// PostAdjustUserBalance 后台手动调节用户可用余额。
+//
+// 权限在路由层用 CheckOrganization 限定为 SuperAdmin / BackendAdmin。
+func (w *DepAdminWalletCtl) PostAdjustUserBalance(c *gin.Context) {
+	var req AdjustUserBalanceReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		apiresp.GinError(c, errs.NewCodeError(freeErrors.ErrInvalidParams, freeErrors.ErrorMessages[freeErrors.ErrInvalidParams]))
+		return
+	}
+
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+
+	currencyID, err := primitive.ObjectIDFromHex(req.CurrencyID)
+	if err != nil {
+		apiresp.GinError(c, errs.NewCodeError(freeErrors.ErrInvalidParams, "币种 ID 格式错误"))
+		return
+	}
+	// 金额用字符串解析成 decimal，全程不经过 float64，避免精度丢失
+	amount, err := decimal.NewFromString(req.Amount)
+	if err != nil {
+		apiresp.GinError(c, errs.NewCodeError(freeErrors.ErrInvalidParams, "金额格式错误"))
+		return
+	}
+
+	balance, err := svc.NewBalanceAdjustSvc().AdjustUserBalance(c, &svc.AdjustBalanceRequest{
+		OrgID:          org.OrgUser.OrganizationId,
+		OperatorUserID: org.OrgUser.UserId,
+		OperatorImID:   org.OrgUser.ImServerUserId,
+		TargetUserID:   req.TargetUserID,
+		CurrencyID:     currencyID,
+		Amount:         amount,
+		Reason:         req.Reason,
+		RequestID:      req.RequestID,
+	})
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiresp.GinSuccess(c, gin.H{"balance": balance})
 }
 
 type WalletBalanceCtl struct{}
