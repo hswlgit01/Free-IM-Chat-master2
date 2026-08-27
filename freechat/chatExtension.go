@@ -41,6 +41,7 @@ import (
 	"github.com/openimsdk/chat/freechat/apps/networkRoute"
 	"github.com/openimsdk/chat/freechat/apps/organization"
 	organizationModel "github.com/openimsdk/chat/freechat/apps/organization/model"
+	organizationSvc "github.com/openimsdk/chat/freechat/apps/organization/svc"
 	"github.com/openimsdk/chat/freechat/apps/paymentMethod"
 	paymentMethodModel "github.com/openimsdk/chat/freechat/apps/paymentMethod/model"
 	"github.com/openimsdk/chat/freechat/apps/rtc"
@@ -694,8 +695,26 @@ func registerDepAdminRouter(router *gin.Engine) {
 		orgUserApi.POST("/update_can_send_free_msg", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateUserCanSendFreeMsg)      // 更新用户是否可自由发送消息
 		orgUserApi.POST("/reset_password", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostResetOrgUserPassword)                    // 组织后台重置组织用户密码
 		orgUserApi.POST("/update_nickname", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostUpdateOrgUserNickname)                  // 组织后台修改组织用户昵称
-		orgUserApi.POST("/clear_login_city", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostClearOrgUserLoginCity)                 // dawn 2026-07-03 异地登录：清除组织用户登录城市绑定
-		orgUserApi.POST("/operation_times", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostOrgUserOperationTimes)                  // dawn 2026-07-04 最近操作时间：批量查询
+
+		// 会员整体迁移：把会员连同其整棵下级团队挂到另一个会员名下。
+		// 一次会改动几十上百条记录且难以人工还原，所以拆成「预览」和「执行」两步。
+		// 权限与余额调节一致，收紧到 SuperAdmin / BackendAdmin。
+		orgUserApi.POST("/migrate_member_preview",
+			chatMiddleware.CheckToken,
+			depmw.CheckOrganization(
+				organizationModel.OrganizationUserSuperAdminRole,
+				organizationModel.OrganizationUserBackendAdminRole,
+			),
+			orgUserCtl.PostPreviewMigrateMember) // 会员迁移预览（只读）
+		orgUserApi.POST("/migrate_member",
+			chatMiddleware.CheckToken,
+			depmw.CheckOrganization(
+				organizationModel.OrganizationUserSuperAdminRole,
+				organizationModel.OrganizationUserBackendAdminRole,
+			),
+			orgUserCtl.PostMigrateMember) // 执行会员迁移
+		orgUserApi.POST("/clear_login_city", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostClearOrgUserLoginCity) // dawn 2026-07-03 异地登录：清除组织用户登录城市绑定
+		orgUserApi.POST("/operation_times", chatMiddleware.CheckToken, depmw.CheckOrganization(), orgUserCtl.PostOrgUserOperationTimes)  // dawn 2026-07-04 最近操作时间：批量查询
 	}
 
 	// 用户标签管理路由 - 集成到组织用户控制器中
@@ -1201,6 +1220,9 @@ func RegisterChatExtension(cfg *plugin.ChatConfig,
 		if db := plugin.MongoCli().GetDB(); db != nil {
 			if err := walletSvc.EnsureAdjustIndex(ctx, db); err != nil {
 				log.ZWarn(ctx, "创建余额调节幂等索引失败(非致命)", err)
+			}
+			if err := organizationSvc.EnsureMigrateLogIndex(ctx, db); err != nil {
+				log.ZWarn(ctx, "创建会员迁移记录索引失败(非致命)", err)
 			}
 		}
 	}()

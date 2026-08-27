@@ -1,10 +1,13 @@
 package organization
 
 import (
+	"strings"
+
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"github.com/openimsdk/tools/errs"
 	"net/http"
 	"slices"
 
@@ -638,6 +641,68 @@ func (w *OrganizationUserCtl) PostUpdateOrgUserNickname(c *gin.Context) {
 	}
 
 	apiresp.GinSuccess(c, map[string]interface{}{})
+}
+
+// MigrateMemberReq 会员整体迁移的请求体。
+type MigrateMemberReq struct {
+	// MemberUserId 被迁移的会员，其整棵下级团队会一起搬走
+	MemberUserId string `json:"memberUserId" binding:"required"`
+	// NewParentUserId 迁移到谁名下
+	NewParentUserId string `json:"newParentUserId" binding:"required"`
+	// Reason 迁移原因，写入迁移记录备查
+	Reason string `json:"reason"`
+}
+
+// PostPreviewMigrateMember 会员迁移预览：只读，不改任何数据。
+//
+// 这个操作会一次性改动几十上百条记录且难以人工还原，所以先让操作者看清楚
+// 将要影响多少人、层级怎么变、哪些上级的团队人数会增减。
+func (w *OrganizationUserCtl) PostPreviewMigrateMember(c *gin.Context) {
+	w.migrateMember(c, true)
+}
+
+// PostMigrateMember 执行会员整体迁移。
+func (w *OrganizationUserCtl) PostMigrateMember(c *gin.Context) {
+	w.migrateMember(c, false)
+}
+
+func (w *OrganizationUserCtl) migrateMember(c *gin.Context, previewOnly bool) {
+	data := MigrateMemberReq{}
+	if err := c.ShouldBind(&data); err != nil {
+		apiresp.GinError(c, freeErrors.ParameterInvalidErr)
+		return
+	}
+	org, err := middleware.GetOrgInfoFromCtx(c)
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	if !previewOnly && strings.TrimSpace(data.Reason) == "" {
+		apiresp.GinError(c, errs.NewCodeError(freeErrors.ErrInvalidParams, "迁移原因不能为空"))
+		return
+	}
+
+	req := &svc.MigrateMemberRequest{
+		OrgID:           org.OrgUser.OrganizationId,
+		OperatorUserID:  org.OrgUser.UserId,
+		OperatorImID:    org.OrgUser.ImServerUserId,
+		MemberUserID:    data.MemberUserId,
+		NewParentUserID: data.NewParentUserId,
+		Reason:          data.Reason,
+	}
+
+	migrateSvc := svc.NewMemberMigrateSvc()
+	var result *svc.MigratePreview
+	if previewOnly {
+		result, err = migrateSvc.Preview(c, req)
+	} else {
+		result, err = migrateSvc.Execute(c, req)
+	}
+	if err != nil {
+		apiresp.GinError(c, err)
+		return
+	}
+	apiresp.GinSuccess(c, result)
 }
 
 func (w *OrganizationUserCtl) PostUpdateUserStatus(c *gin.Context) {
