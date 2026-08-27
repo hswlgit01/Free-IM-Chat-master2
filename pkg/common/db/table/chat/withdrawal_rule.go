@@ -13,6 +13,10 @@ type WithdrawalRule struct {
 	IsEnabled       bool               `bson:"is_enabled" json:"isEnabled"`              // 是否启用提现功能
 	MinAmount       float64            `bson:"min_amount" json:"minAmount"`              // 最小提现金额
 	MaxAmount       float64            `bson:"max_amount" json:"maxAmount"`              // 最大提现金额
+	// AmountStep 提现金额步长：提现额必须是该值的整数倍。0 表示不限制。
+	// 不硬编码「整百」是因为这类规则日后必然要调，而本表本来就是按组织存的配置表。
+	// 例：AmountStep=100 且 MinAmount=200，即「200 起步且只能整百」。
+	AmountStep      float64            `bson:"amount_step" json:"amountStep"`            // 提现金额步长，0=不限制
 	FeeFixed        float64            `bson:"fee_fixed" json:"feeFixed"`                // 固定手续费
 	FeeRate         float64            `bson:"fee_rate" json:"feeRate"`                  // 手续费率(百分比)
 	NeedRealName    bool               `bson:"need_real_name" json:"needRealName"`       // 是否需要实名认证
