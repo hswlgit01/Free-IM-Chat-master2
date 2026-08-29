@@ -23,6 +23,33 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// 系统默认兜底：提现「整百、200 起步」。
+// 后台未配置（或配置低于该值）时按此默认校验；后台明确配置更高下限/其他步长时以配置为准。
+// 这样做的目的：把「整百 + 200 起步」作为系统级默认，避免运维忘记配置导致
+// 用户能提 5 元、250 元这类金额。
+const (
+	// DefaultWithdrawMinAmount 最低提现金额下限（200 起步，配置低于此值一律按此兜底）
+	DefaultWithdrawMinAmount = 200.0
+	// DefaultWithdrawAmountStep 提现金额步长默认值（未配置或 <=0 时按整百 100 兜底）
+	DefaultWithdrawAmountStep = 100.0
+)
+
+// effectiveWithdrawMinAmount 计算生效的最低提现金额：低于 200 一律按 200（硬下限），高于 200 保留配置值。
+func effectiveWithdrawMinAmount(configured float64) float64 {
+	if configured < DefaultWithdrawMinAmount {
+		return DefaultWithdrawMinAmount
+	}
+	return configured
+}
+
+// effectiveWithdrawAmountStep 计算生效的金额步长：未配置或 <=0 时默认 100（整百），配置了正值则保留。
+func effectiveWithdrawAmountStep(configured float64) float64 {
+	if configured <= 0 {
+		return DefaultWithdrawAmountStep
+	}
+	return configured
+}
+
 type WithdrawalSvc struct{}
 
 func NewWithdrawalSvc() *WithdrawalSvc {
@@ -34,12 +61,12 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID st
 	rule, err := withdrawalModel.GetWithdrawalRuleDao().FindByOrganizationID(ctx, organizationID)
 	if err != nil {
 		if dbutil.IsDBNotFound(err) {
-			// 如果没有规则,返回默认禁用状态
+			// 如果没有规则,返回默认禁用状态（金额按系统默认兜底：200 起步、整百步长）
 			return &withdrawalDto.GetWithdrawalRuleResp{
 				IsEnabled:               false,
-				MinAmount:               5.0,
+				MinAmount:               DefaultWithdrawMinAmount,
 				MaxAmount:               50000.0,
-				AmountStep:              0, // 默认不限制步长，由后台按组织配置
+				AmountStep:              DefaultWithdrawAmountStep,
 				FeeFixed:                5.0,
 				FeeRate:                 1.0,
 				NeedRealName:            true,
@@ -52,9 +79,9 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID st
 
 	return &withdrawalDto.GetWithdrawalRuleResp{
 		IsEnabled:               rule.IsEnabled,
-		MinAmount:               rule.MinAmount,
+		MinAmount:               effectiveWithdrawMinAmount(rule.MinAmount),
 		MaxAmount:               rule.MaxAmount,
-		AmountStep:              rule.AmountStep,
+		AmountStep:              effectiveWithdrawAmountStep(rule.AmountStep),
 		FeeFixed:                rule.FeeFixed,
 		FeeRate:                 rule.FeeRate,
 		NeedRealName:            rule.NeedRealName,
@@ -99,8 +126,11 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 	}
 
 	// 4. 检查金额范围
-	if req.Amount < rule.MinAmount {
-		return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount, fmt.Sprintf("minimum withdrawal amount is %.2f", rule.MinAmount))
+	// 默认兜底：最低金额低于 200 一律按 200 起步；步长未配置（<=0）默认整百（100）。
+	// 后台明确配置更高下限或其他步长时，以配置为准。
+	minAmount := effectiveWithdrawMinAmount(rule.MinAmount)
+	if req.Amount < minAmount {
+		return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount, fmt.Sprintf("minimum withdrawal amount is %.2f", minAmount))
 	}
 	if req.Amount > rule.MaxAmount {
 		return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount, fmt.Sprintf("maximum withdrawal amount is %.2f", rule.MaxAmount))
@@ -113,12 +143,13 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 	// math.Mod 会得到一个极小的非零值而把用户本意合法的金额拒掉。
 	// 先四舍五入到分再取模，可以把这类表示误差归一化掉。
 	// 金额本身带零头（如 200.5）两种写法都会正确拒绝。
-	if rule.AmountStep > 0 {
+	amountStep := effectiveWithdrawAmountStep(rule.AmountStep)
+	{
 		amountCents := int64(math.Round(req.Amount * 100))
-		stepCents := int64(math.Round(rule.AmountStep * 100))
+		stepCents := int64(math.Round(amountStep * 100))
 		if stepCents > 0 && amountCents%stepCents != 0 {
 			return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount,
-				fmt.Sprintf("withdrawal amount must be a multiple of %.2f", rule.AmountStep))
+				fmt.Sprintf("withdrawal amount must be a multiple of %.2f", amountStep))
 		}
 	}
 

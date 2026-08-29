@@ -277,11 +277,12 @@ func (s *AdminWithdrawalSvc) GetWithdrawalRule(ctx context.Context, organization
 	rule, err := withdrawalModel.GetWithdrawalRuleDao().FindByOrganizationID(ctx, organizationID)
 	if err != nil {
 		if dbutil.IsDBNotFound(err) {
+			// 未配置时按系统默认兜底展示（200 起步、整百步长），引导运维按需求配置
 			return &withdrawalDto.GetWithdrawalRuleResp{
 				IsEnabled:       false,
-				MinAmount:       5.0,
+				MinAmount:       DefaultWithdrawMinAmount,
 				MaxAmount:       50000.0,
-				AmountStep:      0,
+				AmountStep:      DefaultWithdrawAmountStep,
 				FeeFixed:        5.0,
 				FeeRate:         1.0,
 				NeedRealName:    true,

@@ -89,3 +89,41 @@ func TestNaiveModRejectsTinyRepresentationError(t *testing.T) {
 	t.Logf("math.Mod(%v, %v) = %v（非 0，会误拒）；当前实现判定为合法",
 		amount, step, math.Mod(amount, step))
 }
+
+// TestEffectiveWithdrawDefaults 锁定「整百 + 200 起步」的系统默认兜底：
+// 后台未配置（或配置低于默认值）时按 200 起步 / 整百步长校验，配置更高值则保留。
+func TestEffectiveWithdrawDefaults(t *testing.T) {
+	minCases := []struct {
+		name       string
+		configured float64
+		want       float64
+	}{
+		{"未配置默认5兜底到200", 5, 200},
+		{"0兜底到200", 0, 200},
+		{"配50被提到200", 50, 200},
+		{"配200保持200", 200, 200},
+		{"配300保留300", 300, 300},
+	}
+	for _, c := range minCases {
+		if got := effectiveWithdrawMinAmount(c.configured); got != c.want {
+			t.Errorf("最低金额[%s]：configured=%.2f 得到 %.2f，期望 %.2f", c.name, c.configured, got, c.want)
+		}
+	}
+
+	stepCases := []struct {
+		name       string
+		configured float64
+		want       float64
+	}{
+		{"未配置0兜底到100", 0, 100},
+		{"负数兜底到100", -1, 100},
+		{"配100保持100", 100, 100},
+		{"配50保留50（整十）", 50, 50},
+		{"配200保留200（整二百）", 200, 200},
+	}
+	for _, c := range stepCases {
+		if got := effectiveWithdrawAmountStep(c.configured); got != c.want {
+			t.Errorf("步长[%s]：configured=%.2f 得到 %.2f，期望 %.2f", c.name, c.configured, got, c.want)
+		}
+	}
+}
