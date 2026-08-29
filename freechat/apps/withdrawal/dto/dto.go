@@ -7,6 +7,7 @@ type GetWithdrawalRuleResp struct {
 	IsEnabled               bool    `json:"isEnabled"`               // 是否启用提现功能
 	MinAmount               float64 `json:"minAmount"`               // 最小提现金额
 	MaxAmount               float64 `json:"maxAmount"`               // 最大提现金额
+	AmountStep              float64 `json:"amountStep"`              // 提现金额步长，0=不限制（客户端据此做输入校验与提示）
 	FeeFixed                float64 `json:"feeFixed"`                // 固定手续费
 	FeeRate                 float64 `json:"feeRate"`                 // 手续费率(百分比)
 	NeedRealName            bool    `json:"needRealName"`            // 是否需要实名认证
@@ -122,6 +123,7 @@ type SaveWithdrawalRuleReq struct {
 	IsEnabled       bool    `json:"isEnabled"`                          // 是否启用提现功能
 	MinAmount       float64 `json:"minAmount" binding:"required,gte=0"` // 最小提现金额
 	MaxAmount       float64 `json:"maxAmount" binding:"required,gt=0"`  // 最大提现金额
+	AmountStep      float64 `json:"amountStep" binding:"gte=0"`         // 提现金额步长，0=不限制
 	FeeFixed        float64 `json:"feeFixed" binding:"gte=0"`           // 固定手续费
 	FeeRate         float64 `json:"feeRate" binding:"gte=0,lte=100"`    // 手续费率(百分比)
 	NeedRealName    bool    `json:"needRealName"`                       // 是否需要实名认证

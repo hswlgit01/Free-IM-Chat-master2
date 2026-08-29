@@ -39,6 +39,10 @@ const (
 	TsRecordTypeCompensationInitial   TsRecordType = 51 // "初始补偿金"
 	TsRecordTypeCompensationDeduction TsRecordType = 52 // "补偿金扣减"
 	TsRecordTypeCompensationAdjust    TsRecordType = 53 // "补偿金调整"
+
+	// 后台手动调节可用余额。金额带符号：正数为增加，负数为扣减。
+	// 单独一个类型而不复用「充值/消费」，是为了让这类人工干预在账单和对账时一眼可辨。
+	TsRecordTypeAdminAdjust TsRecordType = 61 // "后台调整"
 )
 
 // WalletTransactionRecord 表示一个用户的余额明细信息, 交易记录表

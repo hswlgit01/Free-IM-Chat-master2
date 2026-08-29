@@ -2,6 +2,7 @@ package svc
 
 import (
 	"context"
+	"math"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -38,6 +39,7 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID st
 				IsEnabled:               false,
 				MinAmount:               5.0,
 				MaxAmount:               50000.0,
+				AmountStep:              0, // 默认不限制步长，由后台按组织配置
 				FeeFixed:                5.0,
 				FeeRate:                 1.0,
 				NeedRealName:            true,
@@ -52,6 +54,7 @@ func (s *WithdrawalSvc) GetWithdrawalRule(ctx context.Context, organizationID st
 		IsEnabled:               rule.IsEnabled,
 		MinAmount:               rule.MinAmount,
 		MaxAmount:               rule.MaxAmount,
+		AmountStep:              rule.AmountStep,
 		FeeFixed:                rule.FeeFixed,
 		FeeRate:                 rule.FeeRate,
 		NeedRealName:            rule.NeedRealName,
@@ -101,6 +104,22 @@ func (s *WithdrawalSvc) SubmitWithdrawal(ctx context.Context, userID, organizati
 	}
 	if req.Amount > rule.MaxAmount {
 		return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount, fmt.Sprintf("maximum withdrawal amount is %.2f", rule.MaxAmount))
+	}
+	// 提现金额必须是步长的整数倍（例：步长 100 即「只能整百提」）。
+	//
+	// 换算成「整数分」再取模，而不是直接 math.Mod(req.Amount, rule.AmountStep)：
+	// 对 200/300 这类整数金额两种写法结果相同，但 Amount 是从 JSON 解析出来的
+	// float64，客户端若由计算得出（如 3 × 100.0）可能传来 300.0000000000001，
+	// math.Mod 会得到一个极小的非零值而把用户本意合法的金额拒掉。
+	// 先四舍五入到分再取模，可以把这类表示误差归一化掉。
+	// 金额本身带零头（如 200.5）两种写法都会正确拒绝。
+	if rule.AmountStep > 0 {
+		amountCents := int64(math.Round(req.Amount * 100))
+		stepCents := int64(math.Round(rule.AmountStep * 100))
+		if stepCents > 0 && amountCents%stepCents != 0 {
+			return nil, errs.NewCodeError(freeErrors.ErrInvalidAmount,
+				fmt.Sprintf("withdrawal amount must be a multiple of %.2f", rule.AmountStep))
+		}
 	}
 
 	// 5. 检查实名认证

@@ -27,6 +27,7 @@ const (
 	OpTypeUpdateOrgCurrency  OperationLogType = "UpdateOrgCurrency"          // 修改组织货币
 	OpTypeCreateBackendAdmin OperationLogType = "CreateBackendAdmin"         // 创建组织管理员
 
+	OpTypeAdjustUserBalance    OperationLogType = "AdjustUserBalance"    // 后台手动调节用户余额
 	OpTypeUpdateUserRole       OperationLogType = "UpdateUserRole"       // 修改用户角色
 	OpTypeUpdateUserCanSendMsg OperationLogType = "UpdateUserCanSendMsg" // 修改用户是否可以发送消息
 
